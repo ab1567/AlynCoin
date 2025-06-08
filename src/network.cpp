@@ -47,8 +47,9 @@ struct ScopedLockTracer {
 };
 static std::unordered_set<std::string> seenTxHashes;
 static std::mutex seenTxMutex;
-static thread_local struct InFlightBroadcast {
+static thread_local struct InFlightData {
     std::string peer;
+    std::string prefix; // e.g. "BLOCK_BROADCAST|" or "FULL_CHAIN|"
     std::string base64;
     bool active{false};
 } inflight;
@@ -839,19 +840,33 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     if (data.rfind(protocolPrefix, 0) == 0)
         data = data.substr(std::strlen(protocolPrefix));
 
-    if (data.rfind(blockBroadcastPrefix, 0) == 0) {
+    if (data.rfind(blockBroadcastPrefix, 0) == 0 ||
+        data.rfind(fullChainPrefix, 0) == 0)
+    {
         inflight.peer   = claimedPeerId;
-        inflight.base64 = data.substr(std::strlen(blockBroadcastPrefix));
+        inflight.prefix = data.rfind(blockBroadcastPrefix, 0) == 0
+                            ? blockBroadcastPrefix
+                            : fullChainPrefix;
+        inflight.base64 = data.substr(inflight.prefix.size());
         inflight.active = true;
         try {
             std::string raw = Crypto::base64Decode(inflight.base64, false);
-            alyncoin::BlockProto proto;
-            if (proto.ParseFromString(raw) && proto.hash().size() == 64 &&
-                !proto.previous_hash().empty())
-            {
-                handleBase64Proto(claimedPeerId, blockBroadcastPrefix,
-                                  inflight.base64, transport);
-                inflight.active = false;
+            if (inflight.prefix == blockBroadcastPrefix) {
+                alyncoin::BlockProto proto;
+                if (proto.ParseFromString(raw) && proto.hash().size() == 64 &&
+                    !proto.previous_hash().empty())
+                {
+                    handleBase64Proto(claimedPeerId, blockBroadcastPrefix,
+                                      inflight.base64, transport);
+                    inflight.active = false;
+                }
+            } else {
+                alyncoin::BlockchainProto proto;
+                if (proto.ParseFromString(raw)) {
+                    handleBase64Proto(claimedPeerId, fullChainPrefix,
+                                      inflight.base64, transport);
+                    inflight.active = false;
+                }
             }
         } catch (...) {
             /* wait for additional lines */
@@ -865,16 +880,25 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         inflight.base64 += data;
         try {
             std::string raw = Crypto::base64Decode(inflight.base64, false);
-            alyncoin::BlockProto proto;
-            if (proto.ParseFromString(raw) && proto.hash().size() == 64 &&
-                !proto.previous_hash().empty())
-            {
-                handleBase64Proto(claimedPeerId, blockBroadcastPrefix,
-                                  inflight.base64, transport);
-                inflight.active = false;
-            } else if (inflight.base64.size() > 5000) {
-                inflight.active = false;
+            if (inflight.prefix == blockBroadcastPrefix) {
+                alyncoin::BlockProto proto;
+                if (proto.ParseFromString(raw) && proto.hash().size() == 64 &&
+                    !proto.previous_hash().empty())
+                {
+                    handleBase64Proto(claimedPeerId, blockBroadcastPrefix,
+                                      inflight.base64, transport);
+                    inflight.active = false;
+                }
+            } else {
+                alyncoin::BlockchainProto proto;
+                if (proto.ParseFromString(raw)) {
+                    handleBase64Proto(claimedPeerId, fullChainPrefix,
+                                      inflight.base64, transport);
+                    inflight.active = false;
+                }
             }
+            if (inflight.active && inflight.base64.size() > 5000)
+                inflight.active = false;
         } catch (...) {
             if (inflight.base64.size() > 5000) inflight.active = false;
         }
