@@ -27,6 +27,7 @@
 #include "proto_utils.h"
 #include <cstdlib>
 #include <cstdio>
+#include <sys/wait.h>
 #ifdef HAVE_MINIUPNPC
 #include <miniupnpc/miniupnpc.h>
 #include <miniupnpc/upnpcommands.h>
@@ -101,7 +102,12 @@ std::vector<std::string> fetchPeersFromDNS(const std::string& domain) {
             }
         }
     }
-    pclose(pipe);
+    int rc = pclose(pipe);
+    if (rc != 0) {
+        int code = WEXITSTATUS(rc);
+        std::cerr << "⚠️ [DNS] nslookup exited with code " << code
+                  << " for domain " << domain << "\n";
+    }
     if (peers.empty()) {
         std::cerr << "⚠️ [DNS] No valid TXT peer records found at " << domain << "\n";
         peers = DEFAULT_DNS_PEERS; // fallback to built-in peers
