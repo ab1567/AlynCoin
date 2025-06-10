@@ -116,21 +116,26 @@ def ensure_alyncoin_node(block=True):
             print("⚠️ 'ldd' not found; skipping shared library check")
         except Exception as e:
             print(f"⚠️ Could not verify shared libraries: {e}")
+    log_path = os.path.join(os.path.dirname(bin_path), "alyncoin_node.log")
+    log_file = open(log_path, "a")
+
     if platform.system() == "Windows":
         vbs_path = os.path.join(os.path.dirname(bin_path), "launch_alyncoin_wsl.vbs")
         if os.path.exists(vbs_path):
             try:
                 subprocess.Popen(
                     ["wscript", vbs_path],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                    stdout=log_file, stderr=log_file, stdin=subprocess.DEVNULL,
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
                 )
-                print("🚀 Launched WSL node via launch_alyncoin_wsl.vbs (truly hidden)")
+                print(f"🚀 Launched WSL node via launch_alyncoin_wsl.vbs (log: {log_path})")
             except Exception as e:
                 print(f"❌ Failed to launch node via VBS: {e}")
+                log_file.close()
                 return False
         else:
             print(f"❌ launch_alyncoin_wsl.vbs not found in {os.path.dirname(bin_path)}")
+            log_file.close()
             return False
 
     else:
@@ -138,21 +143,25 @@ def ensure_alyncoin_node(block=True):
         try:
             p = subprocess.Popen(
                 [bin_path],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                stdout=log_file, stderr=log_file, stdin=subprocess.DEVNULL,
                 close_fds=True, start_new_session=True
             )
-            print(f"🚀 Launched node: {bin_path} (PID={p.pid})")
+            print(f"🚀 Launched node: {bin_path} (PID={p.pid}, log: {log_path})")
         except Exception as e:
             print(f"❌ Failed to launch node: {e}")
+            log_file.close()
             return False
 
     if block:
         for _ in range(40):  # up to 20 seconds
             if is_rpc_up():
+                log_file.close()
                 return True
             time.sleep(0.5)
         print("❌ Node RPC did not become available after launch.")
+        log_file.close()
         return False
+    log_file.close()
     return True
 
 # ---- PyInstaller Resource Path Helper ----
