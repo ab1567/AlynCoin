@@ -322,7 +322,7 @@ void Network::broadcastMessage(const std::string &message) {
         auto transport = peer.second;
         if (transport && transport->isOpen()) {
             try {
-                transport->write(message + "\n");
+                transport->queueWrite(message + "\n");
             } catch (const std::exception &e) {
                 std::cerr << "⚠️ [broadcastMessage] Failed: " << e.what() << "\n";
             }
@@ -336,7 +336,7 @@ bool Network::isSyncing() const { return syncing; }
 void Network::sendMessage(std::shared_ptr<Transport> transport, const std::string &message) {
     try {
         if (!transport || !transport->isOpen()) return;
-        transport->write(message + "\n");
+        transport->queueWrite(message + "\n");
         std::cout << "📡 Sent message: " << message.substr(0, 200) << "...\n";
     } catch (const std::exception &e) {
         std::cerr << "⚠️ [WARNING] Failed sendMessage: " << e.what() << "\n";
@@ -351,7 +351,7 @@ void Network::sendMessageToPeer(const std::string &peer, const std::string &mess
         return;
     }
     try {
-        it->second->write(message + "\n");
+        it->second->queueWrite(message + "\n");
         std::cout << "📡 Sent message to peer " << peer << ": " << message << std::endl;
     } catch (const std::exception &e) {
         std::cerr << "❌ [sendMessageToPeer] Failed to send: " << e.what() << "\n";
@@ -366,7 +366,7 @@ void Network::broadcastTransaction(const Transaction &tx) {
         auto transport = peer.second;
         if (transport && transport->isOpen()) {
             try {
-                transport->write(txData + "\n");
+                transport->queueWrite(txData + "\n");
                 std::cout << "📡 Transaction broadcasted to peer: " << peer.first << std::endl;
             } catch (const std::exception &e) {
                 std::cerr << "❌ [ERROR] Failed to broadcast transaction to "
@@ -384,7 +384,7 @@ void Network::broadcastTransactionToAllExcept(const Transaction &tx, const std::
         auto transport = peer.second;
         if (transport && transport->isOpen()) {
             try {
-                transport->write(txData + "\n");
+                transport->queueWrite(txData + "\n");
                 std::cout << "📡 [TX] Rebroadcast to peer: " << peer.first << std::endl;
             } catch (const std::exception &e) {
                 std::cerr << "❌ [ERROR] Failed to broadcast tx to " << peer.first << ": " << e.what() << std::endl;
@@ -740,7 +740,7 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
         g_pubsub.addPeer(
             claimedPeerId,
             [transport](const std::string& line){
-                if (transport && transport->isOpen()) transport->write(line + "\n");
+                if (transport && transport->isOpen()) transport->queueWrite(line + "\n");
             });
 
         std::cout << "✅ Registered peer transport: " << claimedPeerId
@@ -764,7 +764,7 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
         Json::StreamWriterBuilder wr;  wr["indentation"] = "";
         std::string payload = Json::writeString(wr, hs);
         if (transport && transport->isOpen())
-            transport->write(std::string("ALYN|") + payload + "\n");
+            transport->queueWrite(std::string("ALYN|") + payload + "\n");
     }
 
     // 5. send the initial sync requests
@@ -889,9 +889,9 @@ void Network::autoSyncIfBehind() {
             std::string peerTip = peerManager->getPeerTipHash(peerAddr);
 
             if (ph > static_cast<int>(myHeight)) {
-                peerTransport->write("ALYN|REQUEST_BLOCKCHAIN\n");
+                peerTransport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
             } else if (ph == static_cast<int>(myHeight) && !peerTip.empty() && peerTip != myTip) {
-                peerTransport->write("ALYN|REQUEST_BLOCKCHAIN\n");
+                peerTransport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
             }
         }
     }
@@ -1212,7 +1212,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     // === Ping/Pong ===
     if (data == "PING") {
         if (transport && transport->isOpen())
-            transport->write("ALYN|PONG\n");
+            transport->queueWrite("ALYN|PONG\n");
         return;
     }
     if (data == "PONG")
@@ -1226,7 +1226,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             peerHeight = peerManager->getPeerHeight(claimedPeerId);
         }
         if (peerHeight > static_cast<int>(myHeight) && transport && transport->isOpen()) {
-            transport->write("ALYN|REQUEST_BLOCKCHAIN\n");
+            transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
         } else if (peerHeight < static_cast<int>(myHeight) && transport && transport->isOpen()) {
             sendFullChain(transport);
         }
@@ -1257,7 +1257,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 peerManager->setPeerHeight(claimedPeerId, h);
 
                 if (h > (int)chain.getHeight() && transport && transport->isOpen())
-                    transport->write("ALYN|REQUEST_BLOCKCHAIN\n");
+                    transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
                 else if (h < (int)chain.getHeight() && transport && transport->isOpen())
                     sendFullChain(transport);
                 return;
@@ -1267,7 +1267,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 int h = root["data"].asInt();
                 if (peerManager) peerManager->setPeerHeight(claimedPeerId, h);
                 if (h > (int)chain.getHeight() && transport && transport->isOpen())
-                    transport->write("ALYN|REQUEST_BLOCKCHAIN\n");
+                    transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
                 return;
             }
 
@@ -1279,7 +1279,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 if (ph == static_cast<int>(chain.getHeight()) &&
                     !tip.empty() && tip != chain.getLatestBlockHash() &&
                     transport && transport->isOpen()) {
-                    transport->write("ALYN|REQUEST_BLOCKCHAIN\n");
+                    transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
                 }
                 return;
             }
@@ -1308,7 +1308,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                         out["data"].append(kv.first);
                 }
                 if (transport && transport->isOpen())
-                    transport->write("ALYN|" + Json::writeString(Json::StreamWriterBuilder(), out) + "\n");
+                    transport->queueWrite("ALYN|" + Json::writeString(Json::StreamWriterBuilder(), out) + "\n");
                 return;
             }
 
@@ -1317,7 +1317,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 out["type"] = "height_response";
                 out["data"] = chain.getHeight();
                 if (transport && transport->isOpen())
-                    transport->write("ALYN|" + Json::writeString(Json::StreamWriterBuilder(), out) + "\n");
+                    transport->queueWrite("ALYN|" + Json::writeString(Json::StreamWriterBuilder(), out) + "\n");
                 return;
             }
 
@@ -1326,7 +1326,29 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 out["type"] = "tip_hash_response";
                 out["data"] = chain.getLatestBlockHash();
                 if (transport && transport->isOpen())
-                    transport->write("ALYN|" + Json::writeString(Json::StreamWriterBuilder(), out) + "\n");
+                    transport->queueWrite("ALYN|" + Json::writeString(Json::StreamWriterBuilder(), out) + "\n");
+                return;
+            }
+
+            if (type == "inv") {
+                std::vector<std::string> hashes;
+                for (const auto& h : root["hashes"]) hashes.push_back(h.asString());
+                std::vector<std::string> missing;
+                for (const auto& h : hashes)
+                    if (!chain.hasBlockHash(h)) missing.push_back(h);
+                if (!missing.empty()) {
+                    Json::Value req; req["type"] = "getdata"; req["hashes"] = Json::arrayValue;
+                    for (const auto& h : missing) req["hashes"].append(h);
+                    if (transport && transport->isOpen())
+                        transport->queueWrite("ALYN|" + Json::writeString(Json::StreamWriterBuilder(), req) + "\n");
+                }
+                return;
+            }
+
+            if (type == "getdata") {
+                std::vector<std::string> hashes;
+                for (const auto& h : root["hashes"]) hashes.push_back(h.asString());
+                handleGetData(claimedPeerId, hashes);
                 return;
             }
 
@@ -1450,13 +1472,39 @@ void Network::broadcastBlock(const Block& block, bool /*force*/)
         if (!seen.insert(transport).second) continue;
 
         try {
-            transport->write(message);
+            transport->queueWrite(message);
             std::cout << "✅ [broadcastBlock] Block " << block.getIndex() << " sent (base64 protobuf) to " << peerId << '\n';
         }
         catch (const std::exception& e) {
             std::cerr << "❌ [broadcastBlock] Send to " << peerId << " failed: " << e.what() << '\n';
         }
     }
+}
+
+// Broadcast a batch of blocks
+void Network::broadcastBlocks(const std::vector<Block>& blocks)
+{
+    if (blocks.empty()) return;
+    alyncoin::BlockchainProto proto;
+    for (const auto& b : blocks)
+        *proto.add_blocks() = b.toProtobuf();
+    std::string raw;
+    if (!proto.SerializeToString(&raw) || raw.empty()) return;
+    std::string b64 = Crypto::base64Encode(raw, false);
+    const std::string msg = "ALYN|BLOCK_BATCH|" + b64 + "\n";
+    for (auto& [peerId, transport] : peerTransports) {
+        if (isSelfPeer(peerId) || !transport || !transport->isOpen()) continue;
+        transport->queueWrite(msg);
+    }
+}
+
+void Network::sendBlockToPeer(const std::string& peer, const Block& blk)
+{
+    alyncoin::BlockProto proto = blk.toProtobuf();
+    std::string raw;
+    if (!proto.SerializeToString(&raw) || raw.empty()) return;
+    std::string b64 = Crypto::base64Encode(raw, false);
+    sendData(peer, "ALYN|BLOCK_BROADCAST|" + b64);
 }
 
 //
@@ -1508,7 +1556,7 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
                         std::string raw;
                         if (proto.SerializeToString(&raw)) {
                             std::string b64 = Crypto::base64Encode(raw, false);
-                            peerTransport->write("ALYN|BLOCK_BROADCAST|" + b64 + "\n");
+                            peerTransport->queueWrite("ALYN|BLOCK_BROADCAST|" + b64 + "\n");
                         }
                     }
                 }
@@ -1526,7 +1574,7 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
                                         std::string raw2;
                                         if (proto2.SerializeToString(&raw2)) {
                                             std::string b64_2 = Crypto::base64Encode(raw2, false);
-                                            peerTransport2->write("ALYN|BLOCK_BROADCAST|" + b64_2 + "\n");
+                                            peerTransport2->queueWrite("ALYN|BLOCK_BROADCAST|" + b64_2 + "\n");
                                         }
                                     }
                                 }
@@ -1549,7 +1597,7 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
             std::cerr << "⚠️  [handleBase64Proto] [Orphan Block] Parent missing for block idx="
                       << blk.getIndex() << '\n';
             if (transport && transport->isOpen())
-                transport->write("ALYN|REQUEST_BLOCKCHAIN\n");
+                transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
             buf.push_back(blk);
             return;
         }
@@ -1560,7 +1608,7 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
             std::cerr << "🔀 [handleBase64Proto] Fork block at idx=" << blk.getIndex()
                       << ", requesting full chain\n";
             if (transport && transport->isOpen())
-                transport->write("ALYN|REQUEST_BLOCKCHAIN\n");
+                transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
             buf.push_back(blk);
             return;
         }
@@ -1621,6 +1669,19 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
         }
     } catch (...) {
         std::cerr << "[handleBase64Proto] Unknown exception\n";
+    }
+}
+
+void Network::handleGetData(const std::string& peer, const std::vector<std::string>& hashes)
+{
+    Blockchain& bc = Blockchain::getInstance();
+    for (const auto& h : hashes) {
+        for (const auto& blk : bc.getChain()) {
+            if (blk.getHash() == h) {
+                sendBlockToPeer(peer, blk);
+                break;
+            }
+        }
     }
 }
 
@@ -1789,8 +1850,8 @@ bool Network::sendData(std::shared_ptr<Transport> transport, const std::string &
         }
         finalMessage += '\n';
 
-        transport->write(finalMessage);
-        std::cout << "📡 [DEBUG] Sent message direct to transport: " << finalMessage.substr(0, 100) << "...\n";
+        transport->queueWrite(finalMessage);
+        std::cout << "📡 [DEBUG] Queued message to transport: " << finalMessage.substr(0, 100) << "...\n";
         return true;
     } catch (const std::exception &e) {
         std::cerr << "❌ [sendData] Transport send failed: " << e.what() << "\n";
@@ -1891,6 +1952,8 @@ void Network::sendInitialRequests(const std::string& peerId)
     j["type"] = "request_peers";
     sendData(peerId, "ALYN|" + Json::writeString(b, j) + "\n");
     sendData(peerId, "ALYN|REQUEST_BLOCKCHAIN\n");
+
+    sendInventory(peerId);
 }
 
 // ------------------------------------------------------------------
@@ -1975,7 +2038,7 @@ bool Network::connectToNode(const std::string &host, int port)
 
         Json::StreamWriterBuilder wr;  wr["indentation"] = "";
         std::string payload = Json::writeString(wr, handshake);
-        transport->write(std::string("ALYN|") + payload + '\n');
+        transport->queueWrite(std::string("ALYN|") + payload + '\n');
 
         std::cout << "🤝 Sent handshake to " << peerKey << ": ALYN|"
                   << payload << std::flush
@@ -2141,6 +2204,18 @@ if (base64Block.empty()) {
 
     std::cout << "📡 [LIVE BROADCAST] Latest block sent to " << peerIP << " (Dilithium + Falcon signatures included)\n";
 }
+
+void Network::sendInventory(const std::string& peer)
+{
+    Blockchain& bc = Blockchain::getInstance();
+    Json::Value inv;
+    inv["type"] = "inv";
+    inv["hashes"] = Json::arrayValue;
+    for (const auto& blk : bc.getChain())
+        inv["hashes"].append(blk.getHash());
+    Json::StreamWriterBuilder b; b["indentation"] = "";
+    sendData(peer, std::string("ALYN|") + Json::writeString(b, inv));
+}
 //
 void Network::sendFullChain(const std::string &peerId)
 {
@@ -2201,20 +2276,20 @@ void Network::sendFullChain(std::shared_ptr<Transport> transport)
     std::string b64 = Crypto::base64Encode(serialized, false);
 
     // Send the full-chain in one shot
-    transport->write(std::string("ALYN|FULL_CHAIN|") + b64 + "\n");
+    transport->queueWrite(std::string("ALYN|FULL_CHAIN|") + b64 + "\n");
     std::cerr << "📡 [sendFullChain] Full chain sent ("
               << chain.size() << " blocks, "
               << serialized.size() << " bytes raw, "
               << b64.size() << " base64 chars)\n";
 
     // **CRITICAL**: signal end of chain so peer calls compareAndMergeChains()
-    transport->write("ALYN|BLOCKCHAIN_END\n");
+    transport->queueWrite("ALYN|BLOCKCHAIN_END\n");
     std::cerr << "📡 [sendFullChain] Sent BLOCKCHAIN_END marker\n";
 
     Json::Value heightMsg;
     heightMsg["type"] = "height_response";
     heightMsg["data"] = bc.getHeight();
-    transport->write(std::string("ALYN|") + Json::writeString(Json::StreamWriterBuilder(), heightMsg) + "\n");
+    transport->queueWrite(std::string("ALYN|") + Json::writeString(Json::StreamWriterBuilder(), heightMsg) + "\n");
 }
 
 
@@ -2234,13 +2309,8 @@ void Network::cleanupPeers() {
 
             // ✅ Use prefixed ping (non-breaking protocol message)
             std::string ping = "ALYN|PING\n";
-            if (!peer.second->write(ping)) {
-                std::cerr << "⚠️ Failed to ping peer: " << peer.first
-                          << " - Marking as inactive.\n";
-                inactivePeers.push_back(peer.first);
-            } else {
-                std::cout << "✅ Peer active: " << peer.first << "\n";
-            }
+            peer.second->queueWrite(ping);
+            std::cout << "✅ Peer active: " << peer.first << "\n";
         } catch (const std::exception &e) {
             std::cerr << "⚠️ Exception checking peer " << peer.first << ": "
                       << e.what() << "\n";
@@ -2316,7 +2386,7 @@ void Network::broadcastRollupBlock(const RollupBlock& rollup) {
     for (const auto& [peerID, transport] : peerTransports) {
         if (transport && transport->isOpen()) {
             try {
-                transport->write(std::string("ALYN|") + payload + "\n");
+                transport->queueWrite(std::string("ALYN|") + payload + "\n");
                 std::cout << "✅ Sent rollup block to " << peerID << "\n";
             } catch (const std::exception& e) {
                 std::cerr << "❌ Failed to send rollup block to " << peerID << ": " << e.what() << "\n";
