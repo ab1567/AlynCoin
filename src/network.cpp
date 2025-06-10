@@ -1041,10 +1041,13 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                         catch (...) { std::cerr << "⚠️ Skipped malformed block\n"; }
                     }
                     Blockchain& chain = Blockchain::getInstance();
+                    size_t before = chain.getChain().size();
                     chain.compareAndMergeChains(blocks);
+                    size_t after = chain.getChain().size();
                     if (peerManager)
                         peerManager->setPeerHeight(claimedPeerId, static_cast<int>(blocks.size()) - 1);
-                    std::cerr << "[handleIncomingData] ✅ Synced full chain from peer (single shot)\n";
+                    std::cerr << "[handleIncomingData] ✅ Synced full chain from peer (single shot). "
+                              << before << " -> " << after << " blocks\n";
                 }
             } catch (...) {
                 std::cerr << "[handleIncomingData] ❌ Base64 decode failed for FULL_CHAIN (single shot)\n";
@@ -1730,10 +1733,13 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
                         }
                     }
                     Blockchain& chain = Blockchain::getInstance();
+                    size_t before = chain.getChain().size();
                     chain.compareAndMergeChains(receivedBlocks);
+                    size_t after = chain.getChain().size();
                     if (peerManager)
                         peerManager->setPeerHeight(peer, static_cast<int>(receivedBlocks.size()) - 1);
-                    std::cerr << "[handleBase64Proto] Chain merge complete (base64 streaming)\n";
+                    std::cerr << "[handleBase64Proto] Chain merge complete (base64 streaming). "
+                              << before << " -> " << after << " blocks\n";
                 } else {
                     std::cerr << "[handleBase64Proto] Failed to parse incoming BlockchainProto (base64)\n";
                 }
