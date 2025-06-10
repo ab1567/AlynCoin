@@ -70,6 +70,11 @@ PubSubRouter g_pubsub;
 namespace fs = std::filesystem;
 Network* Network::instancePtr = nullptr;
 
+// Fallback peer(s) in case DNS discovery fails
+static const std::vector<std::string> DEFAULT_DNS_PEERS = {
+    "49.206.43.163:15672" // Known bootstrap peer
+};
+
 // ==== [DNS Peer Discovery] ====
 std::vector<std::string> fetchPeersFromDNS(const std::string& domain) {
     std::vector<std::string> peers;
@@ -99,6 +104,10 @@ std::vector<std::string> fetchPeersFromDNS(const std::string& domain) {
     pclose(pipe);
     if (peers.empty()) {
         std::cerr << "⚠️ [DNS] No valid TXT peer records found at " << domain << "\n";
+        peers = DEFAULT_DNS_PEERS; // fallback to built-in peers
+        if (!peers.empty()) {
+            std::cerr << "ℹ️  [DNS] Using fallback peers list." << std::endl;
+        }
     }
     return peers;
 }

@@ -21,6 +21,9 @@ from dao_tab import DAOTab
 from stats_tab import StatsTab
 from nft_tab import NFTTab
 
+# Default peer list if DNS lookup fails
+DEFAULT_DNS_PEERS = ["49.206.43.163:15672"]
+
 # ---- RPC Client Helper ----
 def alyncoin_rpc(method, params=None):
     url = "http://127.0.0.1:1567/rpc"
@@ -53,6 +56,8 @@ def get_peers_from_dns():
                     peers.append(peer)
     except Exception as e:
         print(f"[WARN] DNS peer resolution failed: {e}")
+    if not peers:
+        peers = DEFAULT_DNS_PEERS
     return peers
 
 def is_alyncoin_dns_accessible():
@@ -60,7 +65,8 @@ def is_alyncoin_dns_accessible():
         answers = dns.resolver.resolve("peers.alyncoin.com", "TXT", lifetime=3)
         return any(answers)
     except Exception:
-        return False
+        # Consider reachable if fallback peers are available
+        return bool(DEFAULT_DNS_PEERS)
 
 # ---- Node Launch/Detect Helpers ----
 def is_rpc_up(port=1567):
