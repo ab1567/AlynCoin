@@ -53,6 +53,8 @@ struct ScopedLockTracer {
 };
 static std::unordered_set<std::string> seenTxHashes;
 static std::mutex seenTxMutex;
+static std::unordered_set<std::string> seenBlockHashes;
+static std::mutex seenBlockMutex;
 struct InFlightData {
     std::string peer;
     std::string prefix;
@@ -1011,6 +1013,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     static constexpr const char* fullChainPrefix    = "FULL_CHAIN|";
     static constexpr const char* rollupPrefix       = "ROLLUP_BLOCK|";
     static constexpr const char* blockBroadcastPrefix = "BLOCK_BROADCAST|";
+    static constexpr const char* blockBatchPrefix   = "BLOCK_BATCH|";
     static constexpr size_t MAX_INFLIGHT_CHAIN_BYTES = 20 * 1024 * 1024; // 20MB
 
     // Strip protocol prefix (so all checks below work)
@@ -1173,6 +1176,25 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         }
         return;
     }
+    if (data.rfind(blockBatchPrefix, 0) == 0) {
+        InFlightData& infl = inflight[claimedPeerId];
+        infl.peer   = claimedPeerId;
+        infl.prefix = blockBatchPrefix;
+        infl.base64 = data.substr(strlen(blockBatchPrefix));
+        infl.active = true;
+        try {
+            std::string raw = Crypto::base64Decode(infl.base64, false);
+            alyncoin::BlockchainProto proto;
+            if (proto.ParseFromString(raw) && proto.blocks_size() > 0) {
+                handleBase64Proto(claimedPeerId, blockBatchPrefix,
+                                  infl.base64, transport);
+                infl.active = false;
+            }
+        } catch (...) {
+            /* wait for more lines */
+        }
+        return;
+    }
 
     auto inflIt = inflight.find(claimedPeerId);
     if (inflIt != inflight.end() && looksLikeBase64(data)) {
@@ -1185,6 +1207,13 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                     !proto.previous_hash().empty())
                 {
                     handleBase64Proto(claimedPeerId, blockBroadcastPrefix,
+                                      inflIt->second.base64, transport);
+                    inflIt->second.active = false;
+                }
+            } else if (inflIt->second.prefix == blockBatchPrefix) {
+                alyncoin::BlockchainProto proto;
+                if (proto.ParseFromString(raw) && proto.blocks_size() > 0) {
+                    handleBase64Proto(claimedPeerId, blockBatchPrefix,
                                       inflIt->second.base64, transport);
                     inflIt->second.active = false;
                 }
@@ -1442,6 +1471,12 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
 // ✅ **Broadcast a mined block to all peers*
 void Network::broadcastBlock(const Block& block, bool /*force*/)
 {
+    {
+        std::lock_guard<std::mutex> lk(seenBlockMutex);
+        if (seenBlockHashes.count(block.getHash()))
+            return;
+        seenBlockHashes.insert(block.getHash());
+    }
     // Serialize to protobuf and then base64
     alyncoin::BlockProto proto = block.toProtobuf();
     std::string raw;
@@ -1485,6 +1520,10 @@ void Network::broadcastBlock(const Block& block, bool /*force*/)
 void Network::broadcastBlocks(const std::vector<Block>& blocks)
 {
     if (blocks.empty()) return;
+    for (const auto& b : blocks) {
+        std::lock_guard<std::mutex> lk(seenBlockMutex);
+        seenBlockHashes.insert(b.getHash());
+    }
     alyncoin::BlockchainProto proto;
     for (const auto& b : blocks)
         *proto.add_blocks() = b.toProtobuf();
@@ -1500,6 +1539,12 @@ void Network::broadcastBlocks(const std::vector<Block>& blocks)
 
 void Network::sendBlockToPeer(const std::string& peer, const Block& blk)
 {
+    {
+        std::lock_guard<std::mutex> lk(seenBlockMutex);
+        if (seenBlockHashes.count(blk.getHash()))
+            return;
+        seenBlockHashes.insert(blk.getHash());
+    }
     alyncoin::BlockProto proto = blk.toProtobuf();
     std::string raw;
     if (!proto.SerializeToString(&raw) || raw.empty()) return;
@@ -1536,6 +1581,16 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
     {
         Blockchain& chain = Blockchain::getInstance();
         auto& buf = incomingChains[fromPeer];
+
+        {
+            std::lock_guard<std::mutex> lk(seenBlockMutex);
+            if (seenBlockHashes.count(blk.getHash())) {
+                std::cerr << "[handleBase64Proto] Duplicate block "
+                          << blk.getHash().substr(0,12) << " ignored\n";
+                return;
+            }
+            seenBlockHashes.insert(blk.getHash());
+        }
 
         // Prevent double-buffer of same block
         if (std::any_of(buf.begin(), buf.end(), [&](const Block& b){ return b.getHash()==blk.getHash(); })) {
@@ -1636,6 +1691,26 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
                 std::cerr << "[handleBase64Proto] Exception decoding base64 block!\n";
             }
             if (ok) processBlock(blk, peer);
+            return;
+        } else if (prefix == "BLOCK_BATCH|") {
+            try {
+                std::string raw = Crypto::base64Decode(b64, false);
+                alyncoin::BlockchainProto protoChain;
+                if (protoChain.ParseFromString(raw)) {
+                    for (const auto& pb : protoChain.blocks()) {
+                        try {
+                            Block blk = Block::fromProto(pb, /*strict=*/true);
+                            processBlock(blk, peer);
+                        } catch (...) {
+                            std::cerr << "⚠️ [handleBase64Proto] Skipped malformed block in batch\n";
+                        }
+                    }
+                } else {
+                    std::cerr << "[handleBase64Proto] Failed to parse incoming block batch (base64)\n";
+                }
+            } catch (...) {
+                std::cerr << "[handleBase64Proto] Exception decoding base64 block batch!\n";
+            }
             return;
         } else if (prefix == "FULL_CHAIN|") {
             try {
@@ -2002,6 +2077,11 @@ bool Network::connectToNode(const std::string &host, int port)
                   << host << ':' << port << '\n';
         return false;
     }
+    std::string peerKey = host + ':' + std::to_string(port);
+    if (bannedPeers.count(peerKey)) {
+        std::cerr << "⚠️ [connectToNode] Peer " << peerKey << " is banned. Skipping connect.\n";
+        return false;
+    }
     try {
         std::cout << "[PEER_CONNECT] Attempting to connect to "
                   << host << ':' << port << '\n';
@@ -2013,7 +2093,7 @@ bool Network::connectToNode(const std::string &host, int port)
             return false;
         }
 
-        const std::string peerKey = host + ':' + std::to_string(port);
+        // peerKey already set above
         {
             ScopedLockTracer _t("connectToNode");
             std::lock_guard<std::timed_mutex> g(peersMutex);
