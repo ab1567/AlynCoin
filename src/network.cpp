@@ -2124,6 +2124,26 @@ bool Network::connectToNode(const std::string &host, int port)
                   << payload << std::flush
                   << "✅ Connected to new peer: " << peerKey << '\n';
 
+        // --- wait briefly for their handshake so we know their height ---
+        std::string remoteHs = transport->readLineWithTimeout(2);
+        if (!remoteHs.empty() && remoteHs.rfind("ALYN|",0)==0)
+            remoteHs = remoteHs.substr(5);
+        if (!remoteHs.empty() && remoteHs.front()=='{' && remoteHs.back()=='}') {
+            Json::Value rh;
+            Json::CharReaderBuilder rb; std::string errs;
+            std::istringstream iss(remoteHs);
+            if (Json::parseFromStream(rb, iss, &rh, &errs) &&
+                rh["type"].asString()=="handshake" && peerManager)
+            {
+                int h = rh.get("height",0).asInt();
+                peerManager->setPeerHeight(peerKey, h);
+                if (h > (int)Blockchain::getInstance().getHeight())
+                    transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+                else if (h < (int)Blockchain::getInstance().getHeight())
+                    sendFullChain(transport);
+            }
+        }
+
         startReadLoop(peerKey, transport);
 
         sendInitialRequests(peerKey);
