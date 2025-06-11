@@ -23,6 +23,9 @@
 
 using boost::asio::ip::tcp;
 
+// Expose DNS peer discovery helper for CLI use
+std::vector<std::string> fetchPeersFromDNS(const std::string& domain);
+
 class Network {
 public:
     // Singleton initialization

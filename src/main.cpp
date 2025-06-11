@@ -30,6 +30,7 @@
 #include "nft/nft_storage.h"
 #include "nft/crypto/aes_utils.h"
 #include <map>
+#include <utility>
 #include <regex>
 #include "nft/nft_utils.h"
 
@@ -1435,20 +1436,32 @@ if (cmd == "nft-verifyhash" && argc >= 3) {
     }
 
     if (network && !connectIP.empty()) {
-        std::string ip;
-        short connectPort;
+        std::vector<std::pair<std::string, short>> targets;
         if (connectIP.find(":") != std::string::npos) {
             size_t colon = connectIP.find(":");
-            ip = connectIP.substr(0, colon);
-            connectPort = std::stoi(connectIP.substr(colon + 1));
+            std::string ip = connectIP.substr(0, colon);
+            short connectPort = static_cast<short>(std::stoi(connectIP.substr(colon + 1)));
+            targets.emplace_back(ip, connectPort);
         } else {
-            ip = connectIP;
-            connectPort = 15671;
+            std::regex ipRegex("^([0-9]{1,3}\\.){3}[0-9]{1,3}$");
+            if (std::regex_match(connectIP, ipRegex) || connectIP == "localhost") {
+                targets.emplace_back(connectIP, 15671);
+            } else {
+                auto peers = fetchPeersFromDNS(connectIP);
+                for (const auto& p : peers) {
+                    size_t c = p.find(":");
+                    if (c == std::string::npos) continue;
+                    std::string ip = p.substr(0, c);
+                    short portVal = static_cast<short>(std::stoi(p.substr(c + 1)));
+                    targets.emplace_back(ip, portVal);
+                }
+            }
         }
 
-        // 🌐 Attempt peer connection
-        network->connectToPeer(ip, connectPort);
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        for (const auto& [ip, connectPort] : targets) {
+            network->connectToPeer(ip, connectPort);
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        }
 
         // 📡 Reconnect self to allow reverse sync
         network->connectToPeer("127.0.0.1", port);
