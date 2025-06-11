@@ -830,9 +830,13 @@ void Network::run() {
     #elif defined(HAVE_LIBNATPMP)
     tryNATPMPPortMapping(this->port);
     #endif
-    // Start listener and IO thread
-    startServer();
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    // Start listener and IO thread only if not already running
+    if (!isRunning) {
+        startServer();
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+    } else {
+        std::cout << "ℹ️ [Network] Listener already active on port " << port << "\n";
+    }
 
     // === 1. Only DNS-based bootstrap at startup ===
     std::vector<std::string> dnsPeers = fetchPeersFromDNS("peers.alyncoin.com");
@@ -2001,6 +2005,10 @@ std::string Network::requestBlockchainSync(const std::string &peer) {
 
 // ✅ **Start Listening for Incoming Connections**
 void Network::startServer() {
+    if (isRunning) {
+        std::cout << "ℹ️ Node already listening on port: " << port << "\n";
+        return;
+    }
     try {
         std::cout << "🌐 Node is now listening for connections on port: " << port << "\n";
 
@@ -2018,6 +2026,7 @@ void Network::startServer() {
         });
 
         ioThread.detach();  // Detach safely
+        isRunning = true;
     } catch (const std::exception &e) {
         std::cerr << "❌ [ERROR] Server failed to start: " << e.what() << "\n";
         std::cerr << "⚠️ Try using a different port or checking if another instance is running.\n";
