@@ -229,13 +229,17 @@ Network::Network(unsigned short port, Blockchain* blockchain, PeerBlacklist* bla
             return;
         }
 
+        if (port == 0) {
+            this->port = acceptor.local_endpoint().port();
+        }
+
         acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
         if (ec) {
             std::cerr << "❌ [Network Listen Error] " << ec.message() << "\n";
             return;
         }
 
-        std::cout << "🌐 Network listener started on port: " << port << "\n";
+        std::cout << "🌐 Network listener started on port: " << this->port << "\n";
 
         peerManager = new PeerManager(blacklistPtr, this);
         isRunning = true;
@@ -260,7 +264,7 @@ Network::~Network() {
 }
 //
  void Network::listenForConnections() {
-     std::cout << "🌐 Listening for connections on port: " << port << std::endl;
+     std::cout << "🌐 Listening for connections on port: " << this->port << std::endl;
 
      acceptor.async_accept([this](boost::system::error_code ec, tcp::socket socket) {
          if (!ec) {
@@ -349,6 +353,12 @@ void Network::broadcastMessage(const std::string &message) {
 
 // ✅ **Getter function for syncing status**
 bool Network::isSyncing() const { return syncing; }
+
+// Return whether the network listener is active
+bool Network::isRunningStatus() const { return isRunning; }
+
+// Retrieve the actual port the network is bound to
+unsigned short Network::getPort() const { return port; }
 // ✅ **Connect to a peer and send a message**
 void Network::sendMessage(std::shared_ptr<Transport> transport, const std::string &message) {
     try {
@@ -824,7 +834,7 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
 
 // ✅ **Run Network Thread**
 void Network::run() {
-    std::cout << "🚀 [Network] Starting network stack for port " << port << "\n";
+    std::cout << "🚀 [Network] Starting network stack for port " << this->port << "\n";
     #ifdef HAVE_MINIUPNPC
     tryUPnPPortMapping(this->port);
     #elif defined(HAVE_LIBNATPMP)
@@ -835,7 +845,7 @@ void Network::run() {
         startServer();
         std::this_thread::sleep_for(std::chrono::seconds(2));
     } else {
-        std::cout << "ℹ️ [Network] Listener already active on port " << port << "\n";
+        std::cout << "ℹ️ [Network] Listener already active on port " << this->port << "\n";
     }
 
     // === 1. Only DNS-based bootstrap at startup ===
@@ -2006,20 +2016,20 @@ std::string Network::requestBlockchainSync(const std::string &peer) {
 // ✅ **Start Listening for Incoming Connections**
 void Network::startServer() {
     if (isRunning) {
-        std::cout << "ℹ️ Node already listening on port: " << port << "\n";
+        std::cout << "ℹ️ Node already listening on port: " << this->port << "\n";
         return;
     }
     try {
-        std::cout << "🌐 Node is now listening for connections on port: " << port << "\n";
+        std::cout << "🌐 Node is now listening for connections on port: " << this->port << "\n";
 
         ioContext.restart();  // Must come before async_accept
         listenForConnections();
 
         std::thread ioThread([this]() {
-            std::cout << "🚀 IO context thread started for port " << port << "\n";
+            std::cout << "🚀 IO context thread started for port " << this->port << "\n";
             try {
                 ioContext.run();
-                std::cout << "✅ IO context exited normally for port " << port << "\n";
+                std::cout << "✅ IO context exited normally for port " << this->port << "\n";
             } catch (const std::exception& e) {
                 std::cerr << "❌ [IOContext] Exception: " << e.what() << "\n";
             }

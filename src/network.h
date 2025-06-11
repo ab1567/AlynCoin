@@ -103,6 +103,8 @@ public:
     void broadcastPeerList();
     void run();
     bool isSyncing() const;
+    bool isRunningStatus() const;
+    unsigned short getPort() const;
     bool connectToNode(const std::string &ip, int port);
     void receiveFullChain(const std::string &sender, const std::string &serializedData);
     void autoMineBlock();

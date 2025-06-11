@@ -576,6 +576,7 @@ void clearInputBuffer() {
 
 int main(int argc, char *argv[]) {
     unsigned short port = DEFAULT_PORT;
+    bool customPort = false;
     std::string dbPath = DBPaths::getBlockchainDB();
     std::string connectIP = "";
     std::string keyDir = DBPaths::getKeyDir();
@@ -585,6 +586,7 @@ int main(int argc, char *argv[]) {
         if (arg == "--port" && i + 1 < argc) {
             port = static_cast<unsigned short>(std::stoi(argv[++i]));
             std::cout << "🌐 Using custom port: " << port << std::endl;
+            customPort = true;
         } else if (arg == "--dbpath" && i + 1 < argc) {
             dbPath = argv[++i];
             std::cout << "📁 Using custom DB path: " << dbPath << std::endl;
@@ -616,6 +618,18 @@ int main(int argc, char *argv[]) {
     if (peerBlacklistPtr) {
         network = &Network::getInstance(port, &blockchain, peerBlacklistPtr.get());
         blockchain.setNetwork(network);
+        if (!network->isRunningStatus() && !customPort) {
+            std::cout << "⚠️ Port " << port << " unavailable, selecting random port...\n";
+            network = &Network::getInstance(0, &blockchain, peerBlacklistPtr.get());
+            blockchain.setNetwork(network);
+            if (network->isRunningStatus()) {
+                port = network->getPort();
+                std::cout << "🌐 Bound to port " << port << "\n";
+            } else {
+                std::cerr << "❌ Failed to bind to any port. Network disabled.\n";
+                network = nullptr;
+            }
+        }
     } else {
         std::cerr << "⚠️ Network disabled due to PeerBlacklist failure.\n";
     }
