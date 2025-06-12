@@ -376,10 +376,19 @@ if __name__ == "__main__":
         QMessageBox.critical(None, "AlynCoin Node Missing",
                              "Could not start AlynCoin node process.\nMake sure 'alyncoin' is in the same folder.")
         sys.exit(1)
-    # --- DNS status (optional warning only) ---
+    # --- DNS requirement ---
     if not is_alyncoin_dns_accessible():
-        msg = "🛑 Cannot reach AlynCoin peer DNS (peers.alyncoin.com). App may be offline."
-        QMessageBox.warning(None, "DNS Offline", msg)
+        msg = (
+            "🛑 Cannot reach AlynCoin peer DNS (peers.alyncoin.com).\n"
+            "Please contact alyncoin.com"
+        )
+        QMessageBox.critical(None, "DNS Unreachable", msg)
+        sys.exit(1)
+
+    sync_info = alyncoin_rpc("syncstatus")
+    if not isinstance(sync_info, dict) or "result" not in sync_info or not sync_info["result"].get("synced", False):
+        QMessageBox.critical(None, "Node Sync", "Local node is not synced.\nPlease contact alyncoin.com")
+        sys.exit(1)
     window = AlynCoinApp()
     window.show()
     sys.exit(app.exec_())
