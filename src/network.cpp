@@ -1923,6 +1923,13 @@ void Network::handleNewBlock(const Block &newBlock) {
     // 3) Index ordering
     if (newBlock.getIndex() < expectedIndex) {
         std::cerr << "⚠️ [Node] Ignoring duplicate or old block (idx=" << newBlock.getIndex() << ").\n";
+        if (!blockchain.hasBlockHash(newBlock.getHash())) {
+            std::cerr << "🧐 [Node] Unknown historical block. Requesting full sync.\n";
+            blockchain.setPendingForkChain({newBlock});
+            for (const auto &peer : peerTransports) {
+                sendData(peer.first, "ALYN|REQUEST_BLOCKCHAIN");
+            }
+        }
         return;
     }
     if (newBlock.getIndex() > expectedIndex) {
