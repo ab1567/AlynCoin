@@ -70,11 +70,15 @@ static thread_local std::unordered_map<std::string, InFlightData> inflight;
 static inline bool looksLikeBase64(const std::string& s) {
     if (s.size() < 16)
         return false;
+    bool hasNonHex = false;
     for (unsigned char c : s) {
         if (!(std::isalnum(c) || c == '+' || c == '/' || c == '='))
             return false;
+        if (!std::isdigit(c) && !(c >= 'A' && c <= 'F') &&
+            !(c >= 'a' && c <= 'f'))
+            hasNonHex = true;
     }
-    return true;
+    return hasNonHex;
 }
 
 // Return base64 string without CR/LF characters
