@@ -954,6 +954,8 @@ void Network::autoSyncIfBehind() {
                 peerTransport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
             } else if (ph == static_cast<int>(myHeight) && !peerTip.empty() && peerTip != myTip) {
                 peerTransport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+            } else if (ph < static_cast<int>(myHeight)) {
+                sendFullChain(peerTransport);
             }
         }
     }
@@ -1243,8 +1245,20 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             return;
         }
 
-        // Unexpected message while syncing: abandon buffer and fall through
-        inflightFullChainBase64.erase(claimedPeerId);
+        if (data == "PING") {
+            if (transport && transport->isOpen())
+                transport->queueWrite("ALYN|PONG\n");
+            return;
+        }
+        if (data == "PONG")
+            return;
+
+        if (!data.empty() && data.front() == '{') {
+            // Defer to JSON handler below without clearing buffer
+        } else {
+            // Unexpected message while syncing: abandon buffer and fall through
+            inflightFullChainBase64.erase(claimedPeerId);
+        }
     }
 
     // --- Legacy multi-line FULL_CHAIN handler ---
