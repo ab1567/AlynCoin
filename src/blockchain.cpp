@@ -1166,11 +1166,6 @@ bool Blockchain::loadFromDB() {
     } else if (!loadedBlocks.empty()) {
         chain = loadedBlocks;
     } else {
-        std::string dbPath = DBPaths::getBlockchainDB();
-        if (dbPath.find("db_node_b") != std::string::npos || dbPath.find("temp") != std::string::npos) {
-            std::cerr << "🧪 [INFO] Peer mode detected — no genesis. Waiting for sync.\n";
-            return true;
-        }
         std::cerr << "🪐 Creating Genesis Block...\n";
         createGenesisBlock(true);
         std::cout << "⏳ Applying vesting schedule for early supporters...\n";
