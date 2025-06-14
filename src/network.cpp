@@ -1081,7 +1081,10 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         data = data.substr(std::strlen(protocolPrefix));
 
     // --- Robust JSON re-assembly ----------------------------------------
-    {
+    auto bufIt = partialJsonBuf.find(claimedPeerId);
+    bool assemblingJson = (bufIt != partialJsonBuf.end() && !bufIt->second.empty()) ||
+                          (!data.empty() && data.front() == '{');
+    if (assemblingJson) {
         std::string &buf = partialJsonBuf[claimedPeerId];
         buf += data;
 
