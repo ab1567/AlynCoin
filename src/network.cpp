@@ -65,12 +65,22 @@ struct InFlightData {
 };
 static thread_local std::unordered_map<std::string, InFlightData> inflight;
 static inline bool looksLikeBase64(const std::string& s) {
-    if (s.size() < 16 || s.size() % 4 != 0) return false;
+    if (s.size() < 16)
+        return false;
     for (unsigned char c : s) {
         if (!(std::isalnum(c) || c == '+' || c == '/' || c == '='))
             return false;
     }
     return true;
+}
+
+// Return base64 string without CR/LF characters
+static std::string b64Flat(const std::string& bin)
+{
+    std::string tmp = Crypto::base64Encode(bin, false);
+    tmp.erase(std::remove(tmp.begin(), tmp.end(), '\n'), tmp.end());
+    tmp.erase(std::remove(tmp.begin(), tmp.end(), '\r'), tmp.end());
+    return tmp;
 }
 static std::map<uint64_t, Block> futureBlockBuffer;
 PubSubRouter g_pubsub;
@@ -1566,7 +1576,7 @@ void Network::broadcastBlock(const Block& block, bool /*force*/)
         std::cerr << "[BUG] EMPTY proto in broadcastBlock for idx=" << block.getIndex() << " hash=" << block.getHash() << "\n";
         return;
     }
-    std::string b64 = Crypto::base64Encode(raw, false);
+    std::string b64 = b64Flat(raw);
 
     // Frame: "ALYN|BLOCK_BROADCAST|" + [base64] + "\n"
     const std::string message = "ALYN|BLOCK_BROADCAST|" + b64 + "\n";
@@ -1611,7 +1621,7 @@ void Network::broadcastBlocks(const std::vector<Block>& blocks)
         *proto.add_blocks() = b.toProtobuf();
     std::string raw;
     if (!proto.SerializeToString(&raw) || raw.empty()) return;
-    std::string b64 = Crypto::base64Encode(raw, false);
+    std::string b64 = b64Flat(raw);
     const std::string msg = "ALYN|BLOCK_BATCH|" + b64 + "\n";
     for (auto& [peerId, transport] : peerTransports) {
         if (isSelfPeer(peerId) || !transport || !transport->isOpen()) continue;
@@ -1630,7 +1640,7 @@ void Network::sendBlockToPeer(const std::string& peer, const Block& blk)
     alyncoin::BlockProto proto = blk.toProtobuf();
     std::string raw;
     if (!proto.SerializeToString(&raw) || raw.empty()) return;
-    std::string b64 = Crypto::base64Encode(raw, false);
+    std::string b64 = b64Flat(raw);
     sendData(peer, "ALYN|BLOCK_BROADCAST|" + b64);
 }
 
@@ -2383,9 +2393,7 @@ void Network::sendLatestBlock(const std::string &peerIP) {
         return;
     }
 
-    std::string base64Block = Crypto::base64Encode(serializedBlock, false);
-    base64Block.erase(std::remove(base64Block.begin(), base64Block.end(), '\n'), base64Block.end());
-    base64Block.erase(std::remove(base64Block.begin(), base64Block.end(), '\r'), base64Block.end());
+    std::string base64Block = b64Flat(serializedBlock);
 
 
 if (base64Block.empty()) {
@@ -2465,7 +2473,7 @@ void Network::sendFullChain(std::shared_ptr<Transport> transport)
         std::cerr << "❌ [sendFullChain] Couldn’t serialize chain (" << chain.size() << " blocks)\n";
         return;
     }
-    std::string b64 = Crypto::base64Encode(serialized, false);
+    std::string b64 = b64Flat(serialized);
 
     // Send the full-chain in one shot
     transport->queueWrite(std::string("ALYN|FULL_CHAIN|") + b64 + "\n");
