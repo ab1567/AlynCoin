@@ -67,6 +67,7 @@ struct InFlightData {
     bool active{false};
 };
 static thread_local std::unordered_map<std::string, InFlightData> inflight;
+static thread_local std::unordered_map<std::string, std::string> partialJsonBuf;
 static inline bool looksLikeBase64(const std::string& s) {
     if (s.size() < 16)
         return false;
@@ -1078,26 +1079,34 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     if (data.rfind(protocolPrefix, 0) == 0)
         data = data.substr(std::strlen(protocolPrefix));
 
-    static thread_local std::unordered_map<std::string, std::string> partialJsonBuf;
+    /* ------------------------------------------------------------------
+       Robust JSON re-assembly.
+       - Works even if the first chunk does NOT start with '{'
+       - Keeps buffering until we have an opening AND a closing brace
+       - Hard cap at 64 KiB to avoid memory abuse
+    ------------------------------------------------------------------- */
+    {
+        std::string &buf = partialJsonBuf[claimedPeerId];
+        buf += data;
 
-    // Accumulate JSON fragments if message was split or truncated
-    if (!data.empty() && data.front() == '{' && data.back() != '}') {
-        partialJsonBuf[claimedPeerId] += data;
-        if (partialJsonBuf[claimedPeerId].size() > 8192)
-            partialJsonBuf.erase(claimedPeerId);
-        return;
-    }
-    if (partialJsonBuf.count(claimedPeerId)) {
-        data = partialJsonBuf[claimedPeerId] + data;
-        if (!data.empty() && data.front() == '{' && data.back() == '}') {
-            partialJsonBuf.erase(claimedPeerId);
-        } else {
-            partialJsonBuf[claimedPeerId] = data;
-            if (partialJsonBuf[claimedPeerId].size() > 8192)
-                partialJsonBuf.erase(claimedPeerId);
+        auto firstBrace = buf.find('{');
+        if (firstBrace != std::string::npos && firstBrace > 0)
+            buf.erase(0, firstBrace);
+
+        if (buf.empty() || buf.front() != '{') {
+            if (buf.size() > 65536) buf.clear();
             return;
         }
+
+        if (buf.back() != '}') {
+            if (buf.size() > 65536) buf.clear();
+            return;
+        }
+
+        data.swap(buf);
+        partialJsonBuf.erase(claimedPeerId);
     }
+    /* --------------- end of JSON re-assembly ------------------------- */
 
     // === FULL_CHAIN inflight buffer for peer sync ===
 
