@@ -44,6 +44,9 @@
 
 // ==== [Globals, Statics] ====
 static std::unordered_map<std::string, std::vector<Block>> incomingChains;
+// Buffers for in-progress FULL_CHAIN syncs
+static std::unordered_map<std::string, std::string> inflightFullChainBase64;
+static std::unordered_map<std::string, std::string> legacyChainBuf;
 struct ScopedLockTracer {
     std::string name;
     ScopedLockTracer(const std::string &n) : name(n) {
@@ -1093,8 +1096,6 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     }
 
     // === FULL_CHAIN inflight buffer for peer sync ===
-    static std::unordered_map<std::string, std::string> inflightFullChainBase64;
-    static std::unordered_map<std::string, std::string> legacyChainBuf;
 
     // --- Robust FULL_CHAIN handler: single-shot or multi-chunk
     if (data.rfind(fullChainPrefix, 0) == 0) {
