@@ -1169,8 +1169,13 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             return;
         }
 
-        // If this is a *large* message or (likely) single-shot, decode and process now!
-        if (b64part.size() > 10000 || b64part.find("BLOCKCHAIN_END") != std::string::npos) {
+        // If this is a *large* message, decode and process now.
+        // Older peers sometimes appended "BLOCKCHAIN_END" directly after the
+        // base64 payload. Checking for that substring caused false positives
+        // when the random data accidentally contained it, leading to truncated
+        // chains. We now rely solely on message size and the explicit
+        // BLOCKCHAIN_END marker to delimit transfers.
+        if (b64part.size() > 10000) {
             try {
                 std::string cleanPart = b64part;
                 size_t extraPos = cleanPart.find("ALYN|");
