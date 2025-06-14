@@ -1085,6 +1085,12 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         std::string &buf = partialJsonBuf[claimedPeerId];
         buf += data;
 
+        // Remove stray protocol prefixes that may appear if a peer sends
+        // each fragment with "ALYN|" prepended.
+        size_t pos = 0;
+        while ((pos = buf.find(protocolPrefix, pos)) != std::string::npos)
+            buf.erase(pos, std::strlen(protocolPrefix));
+
         // Trim noise before the first '{'
         auto firstBrace = buf.find('{');
         if (firstBrace != std::string::npos && firstBrace > 0)
