@@ -1172,7 +1172,14 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         // If this is a *large* message or (likely) single-shot, decode and process now!
         if (b64part.size() > 10000 || b64part.find("BLOCKCHAIN_END") != std::string::npos) {
             try {
-                std::string raw = Crypto::base64Decode(b64part, false);
+                std::string cleanPart = b64part;
+                size_t extraPos = cleanPart.find("ALYN|");
+                if (extraPos != std::string::npos)
+                    cleanPart.erase(extraPos);
+                while (cleanPart.size() % 4)
+                    cleanPart.pop_back();
+
+                std::string raw = Crypto::base64Decode(cleanPart, false);
                 alyncoin::BlockchainProto protoChain;
                 if (!protoChain.ParseFromString(raw)) {
                     std::cerr << "[handleIncomingData] ❌ Invalid FULL_CHAIN protobuf (single shot)\n";
@@ -1213,6 +1220,11 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             // Finalize and process the buffered base64
             std::string& b64 = inflightFullChainBase64[claimedPeerId];
             try {
+                size_t extraPos = b64.find("ALYN|");
+                if (extraPos != std::string::npos)
+                    b64.erase(extraPos);
+                while (b64.size() % 4)
+                    b64.pop_back();
                 std::string raw = Crypto::base64Decode(b64, false);
                 alyncoin::BlockchainProto protoChain;
                 if (!protoChain.ParseFromString(raw)) {
