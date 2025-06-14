@@ -1229,8 +1229,9 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             }
             inflightFullChainBase64.erase(claimedPeerId);
             return;
-        } else {
-            // Intermediate chunk: append
+        }
+
+        if (data.find('|') == std::string::npos && looksLikeBase64(data)) {
             inflightFullChainBase64[claimedPeerId] += data;
             if (inflightFullChainBase64[claimedPeerId].size() > MAX_INFLIGHT_CHAIN_BYTES) {
                 std::cerr << "[handleIncomingData] ⚠️ FULL_CHAIN buffer exceeded limit from "
@@ -1238,10 +1239,12 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                           << inflightFullChainBase64[claimedPeerId].size()
                           << " bytes)\n";
                 inflightFullChainBase64.erase(claimedPeerId);
-                return;
             }
             return;
         }
+
+        // Unexpected message while syncing: abandon buffer and fall through
+        inflightFullChainBase64.erase(claimedPeerId);
     }
 
     // --- Legacy multi-line FULL_CHAIN handler ---
