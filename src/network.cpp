@@ -1098,11 +1098,24 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
 
     // --- Robust FULL_CHAIN handler: single-shot or multi-chunk
     if (data.rfind(fullChainPrefix, 0) == 0) {
-        const std::string b64 = data.substr(strlen(fullChainPrefix));
+        const std::string b64part = data.substr(strlen(fullChainPrefix));
+
+        if (inflightFullChainBase64.count(claimedPeerId)) {
+            inflightFullChainBase64[claimedPeerId] += b64part;
+            if (inflightFullChainBase64[claimedPeerId].size() > MAX_INFLIGHT_CHAIN_BYTES) {
+                std::cerr << "[handleIncomingData] ⚠️ FULL_CHAIN buffer exceeded limit from "
+                          << claimedPeerId << " ("
+                          << inflightFullChainBase64[claimedPeerId].size()
+                          << " bytes)\n";
+                inflightFullChainBase64.erase(claimedPeerId);
+            }
+            return;
+        }
+
         // If this is a *large* message or (likely) single-shot, decode and process now!
-        if (b64.size() > 10000 || b64.find("BLOCKCHAIN_END") != std::string::npos) {
+        if (b64part.size() > 10000 || b64part.find("BLOCKCHAIN_END") != std::string::npos) {
             try {
-                std::string raw = Crypto::base64Decode(b64, false);
+                std::string raw = Crypto::base64Decode(b64part, false);
                 alyncoin::BlockchainProto protoChain;
                 if (!protoChain.ParseFromString(raw)) {
                     std::cerr << "[handleIncomingData] ❌ Invalid FULL_CHAIN protobuf (single shot)\n";
@@ -1127,7 +1140,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             return;
         } else {
             // Otherwise, treat as multi-chunk and buffer
-            inflightFullChainBase64[claimedPeerId] = b64;
+            inflightFullChainBase64[claimedPeerId] = b64part;
             if (inflightFullChainBase64[claimedPeerId].size() > MAX_INFLIGHT_CHAIN_BYTES) {
                 std::cerr << "[handleIncomingData] ⚠️ FULL_CHAIN buffer exceeded limit from "
                           << claimedPeerId << " ("
@@ -2475,12 +2488,22 @@ void Network::sendFullChain(std::shared_ptr<Transport> transport)
     }
     std::string b64 = b64Flat(serialized);
 
-    // Send the full-chain in one shot
-    transport->queueWrite(std::string("ALYN|FULL_CHAIN|") + b64 + "\n");
+    // Split into smaller chunks to avoid line length limits
+    const size_t CHUNK_SIZE = 8000; // bytes of base64 per chunk
+    size_t offset = 0;
+    int chunks = 0;
+    while (offset < b64.size()) {
+        size_t len = std::min(CHUNK_SIZE, b64.size() - offset);
+        std::string chunk = b64.substr(offset, len);
+        // Prefix each chunk so receivers can reliably accumulate the chain
+        transport->queueWrite(std::string("ALYN|FULL_CHAIN|") + chunk + "\n");
+        offset += len;
+        ++chunks;
+    }
     std::cerr << "📡 [sendFullChain] Full chain sent ("
               << chain.size() << " blocks, "
               << serialized.size() << " bytes raw, "
-              << b64.size() << " base64 chars)\n";
+              << b64.size() << " base64 chars in " << chunks << " chunks)\n";
 
     // **CRITICAL**: signal end of chain so peer calls compareAndMergeChains()
     transport->queueWrite("ALYN|BLOCKCHAIN_END\n");
