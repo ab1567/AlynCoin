@@ -1085,7 +1085,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     // --- Robust JSON re-assembly ----------------------------------------
     auto bufIt = partialJsonBuf.find(claimedPeerId);
     bool assemblingJson = (bufIt != partialJsonBuf.end() && !bufIt->second.empty()) ||
-                          (!data.empty() && data.front() == '{');
+                          (!data.empty() && (data.front() == '{' || data.front() == '['));
     if (assemblingJson) {
         std::string &buf = partialJsonBuf[claimedPeerId];
         buf += data;
@@ -1096,24 +1096,27 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         while ((pos = buf.find(protocolPrefix, pos)) != std::string::npos)
             buf.erase(pos, std::strlen(protocolPrefix));
 
-        // Trim noise before the first '{'
-        auto firstBrace = buf.find('{');
+        // Trim noise before the first '{' or '['
+        auto firstBrace = buf.find_first_of("{[");
         if (firstBrace != std::string::npos && firstBrace > 0)
             buf.erase(0, firstBrace);
 
-        // Still waiting for a starting brace?
-        if (buf.empty() || buf.front() != '{') {
+        // Still waiting for a starting brace/bracket?
+        if (buf.empty() || (buf.front() != '{' && buf.front() != '[')) {
             if (buf.size() > 65536) buf.clear();
             return;
         }
 
-        // Wait until we have a closing brace
-        if (buf.back() != '}') {
+        // Determine expected closing character
+        char endChar = (buf.front() == '[') ? ']' : '}';
+
+        // Wait until we have a closing brace/bracket
+        if (buf.back() != endChar) {
             if (buf.size() > 65536) buf.clear();
             return;
         }
 
-        // Complete JSON object ready
+        // Complete JSON fragment ready
         data.swap(buf);
         partialJsonBuf.erase(claimedPeerId);
     }
@@ -1427,7 +1430,9 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     }
 
     // === JSON Messages ===
-    if (!data.empty() && data.front() == '{' && data.back() == '}') {
+    if (!data.empty() &&
+        ((data.front() == '{' && data.back() == '}') ||
+         (data.front() == '[' && data.back() == ']'))) {
         try {
             Json::Value root;
             std::istringstream s(data);
@@ -1436,6 +1441,10 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             if (!Json::parseFromStream(rb, s, &root, &errs)) return;
 
             auto& chain = Blockchain::getInstance();
+
+            if (root.isArray() && !root.empty())
+                root = root[0];
+
             std::string type = root["type"].asString();
 
             if (type == "handshake" && peerManager) {
