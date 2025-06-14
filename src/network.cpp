@@ -1097,6 +1097,36 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
 
     // === FULL_CHAIN inflight buffer for peer sync ===
 
+    // If we already have a FULL_CHAIN transfer in progress from this peer
+    // and the incoming line looks like raw base64 without any prefix,
+    // treat it as a continuation chunk. This makes syncing tolerant of
+    // peers that omit the "ALYN|FULL_CHAIN|" prefix on subsequent lines.
+    if (inflightFullChainBase64.count(claimedPeerId) &&
+        data.find('|') == std::string::npos && looksLikeBase64(data))
+    {
+        inflightFullChainBase64[claimedPeerId] += data;
+        if (inflightFullChainBase64[claimedPeerId].size() > MAX_INFLIGHT_CHAIN_BYTES) {
+            std::cerr << "[handleIncomingData] \u26a0\ufe0f FULL_CHAIN buffer exceeded limit from "
+                      << claimedPeerId << " ("
+                      << inflightFullChainBase64[claimedPeerId].size()
+                      << " bytes)\n";
+            inflightFullChainBase64.erase(claimedPeerId);
+        }
+        return;
+    }
+
+    // Allow initiating a new FULL_CHAIN transfer even if the first chunk
+    // arrives without the protocol prefix. Peers may emit the chain as plain
+    // base64 lines when joining mid-sync.
+    if (!inflightFullChainBase64.count(claimedPeerId) &&
+        data.find('|') == std::string::npos && data.size() > 50 && looksLikeBase64(data))
+    {
+        inflightFullChainBase64[claimedPeerId] = data;
+        return;
+    }
+
+    // --- Robust FULL_CHAIN handler: single-shot or multi-chunk
+
     // --- Robust FULL_CHAIN handler: single-shot or multi-chunk
     if (data.rfind(fullChainPrefix, 0) == 0) {
         const std::string b64part = data.substr(strlen(fullChainPrefix));
