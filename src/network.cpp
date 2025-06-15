@@ -45,10 +45,7 @@
 // ==== [Globals, Statics] ====
 static std::unordered_map<std::string, std::vector<Block>> incomingChains;
 // Buffers for in-progress FULL_CHAIN syncs
-static std::unordered_map<std::string, std::string> inflightFullChainBase64;
-static std::unordered_map<std::string, std::string> legacyChainBuf;
-// Buffer for assembling fragmented JSON messages per peer
-static thread_local std::unordered_map<std::string, std::string> partialJsonBuf;
+// Per-peer sync buffers are now stored in PeerState via peerTransports
 struct ScopedLockTracer {
     std::string name;
     ScopedLockTracer(const std::string &n) : name(n) {
@@ -69,18 +66,20 @@ struct InFlightData {
     bool active{false};
 };
 static thread_local std::unordered_map<std::string, InFlightData> inflight;
+//
+// Return true if the string resembles base64 data.  The previous implementation
+// required at least one non-hex character which falsely rejected perfectly
+// valid chunks containing only characters [0-9A-Fa-f].  That caused FULL_CHAIN
+// syncs to fail whenever such a chunk appeared.  We now simply verify that all
+// characters are within the base64 alphabet and the length is reasonable.
 static inline bool looksLikeBase64(const std::string& s) {
     if (s.size() < 16)
         return false;
-    bool hasNonHex = false;
     for (unsigned char c : s) {
         if (!(std::isalnum(c) || c == '+' || c == '/' || c == '='))
             return false;
-        if (!std::isdigit(c) && !(c >= 'A' && c <= 'F') &&
-            !(c >= 'a' && c <= 'f'))
-            hasNonHex = true;
     }
-    return hasNonHex;
+    return true;
 }
 
 // Return base64 string without CR/LF characters
@@ -398,7 +397,7 @@ void Network::broadcastMessage(const std::string &message) {
     ScopedLockTracer tracer("broadcastMessage");
     std::lock_guard<std::timed_mutex> lock(peersMutex);
     for (const auto &peer : peerTransports) {
-        auto transport = peer.second;
+        auto transport = peer.second.tx;
         if (transport && transport->isOpen()) {
             try {
                 transport->queueWrite(message + "\n");
@@ -425,12 +424,12 @@ void Network::sendMessage(std::shared_ptr<Transport> transport, const std::strin
 //
 void Network::sendMessageToPeer(const std::string &peer, const std::string &message) {
     auto it = peerTransports.find(peer);
-    if (it == peerTransports.end() || !it->second || !it->second->isOpen()) {
+    if (it == peerTransports.end() || !it->second.tx || !it->second.tx->isOpen()) {
         std::cerr << "❌ [sendMessageToPeer] Peer not found or transport closed: " << peer << "\n";
         return;
     }
     try {
-        it->second->queueWrite(message + "\n");
+        it->second.tx->queueWrite(message + "\n");
         std::cout << "📡 Sent message to peer " << peer << ": " << message << std::endl;
     } catch (const std::exception &e) {
         std::cerr << "❌ [sendMessageToPeer] Failed to send: " << e.what() << "\n";
@@ -442,7 +441,7 @@ void Network::sendMessageToPeer(const std::string &peer, const std::string &mess
 void Network::broadcastTransaction(const Transaction &tx) {
     std::string txData = tx.serialize();
     for (const auto &peer : peerTransports) {
-        auto transport = peer.second;
+        auto transport = peer.second.tx;
         if (transport && transport->isOpen()) {
             try {
                 transport->queueWrite(txData + "\n");
@@ -460,7 +459,7 @@ void Network::broadcastTransactionToAllExcept(const Transaction &tx, const std::
     std::string txData = tx.serialize();
     for (const auto &peer : peerTransports) {
         if (peer.first == excludePeer) continue;
-        auto transport = peer.second;
+        auto transport = peer.second.tx;
         if (transport && transport->isOpen()) {
             try {
                 transport->queueWrite(txData + "\n");
@@ -483,8 +482,9 @@ void Network::syncWithPeers() {
     }
 
     size_t myHeight = Blockchain::getInstance().getHeight();
-    for (const auto &[peer, transport] : peerTransports) {
+    for (const auto &[peer, entry] : peerTransports) {
         if (peer.empty()) continue;
+        auto transport = entry.tx;
 
         int peerHeight = -1;
         if (peerManager) peerHeight = peerManager->getPeerHeight(peer);
@@ -782,7 +782,7 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
             {
                 ScopedLockTracer t("handlePeer/fallback");
                 std::lock_guard<std::timed_mutex> lk(peersMutex);
-                peerTransports[realPeerId] = transport;
+                peerTransports[realPeerId] = {transport, std::make_shared<PeerState>()};
             }
             if (!handshakeLine.empty())
                 handleIncomingData(realPeerId, handshakeLine, transport);
@@ -806,9 +806,10 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
 
         auto it = peerTransports.find(claimedPeerId);
         if (it != peerTransports.end()) {
-            it->second = transport; // refresh
+            it->second.tx = transport; // refresh
         } else {
-            peerTransports.emplace(claimedPeerId, transport);  // brand-new peer
+            peerTransports.emplace(claimedPeerId,
+                                   PeerEntry{transport, std::make_shared<PeerState>()});
             if (peerManager) peerManager->connectToPeer(claimedPeerId);
         }
 
@@ -850,7 +851,9 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
 
     transport->startReadLoop(
         [this, claimedPeerId](const std::string& line) {
-            handleIncomingData(claimedPeerId, line, peerTransports[claimedPeerId]);
+            auto it = peerTransports.find(claimedPeerId);
+            if (it != peerTransports.end())
+                handleIncomingData(claimedPeerId, line, it->second.tx);
         }
     );
 
@@ -956,7 +959,8 @@ void Network::autoSyncIfBehind() {
     std::string myTip = blockchain.getLatestBlockHash();
 
     std::lock_guard<std::timed_mutex> lock(peersMutex);
-    for (const auto &[peerAddr, peerTransport] : peerTransports) {
+    for (const auto &[peerAddr, entry] : peerTransports) {
+        auto peerTransport = entry.tx;
         if (!peerTransport || !peerTransport->isOpen()) continue;
 
         std::cerr << "🌐 [autoSyncIfBehind] Requesting height from peer: " << peerAddr << std::endl;
@@ -1034,7 +1038,7 @@ void Network::periodicSync()
     for (const auto &p : peerTransports)
     {
         const auto &peerId  = p.first;
-        const auto &transport  = p.second;
+        const auto &transport  = p.second.tx;
         if (!transport || !transport->isOpen()) continue;
 
         Json::Value req;   req["type"] = "height_request";
@@ -1050,7 +1054,7 @@ void Network::periodicSync()
 std::vector<std::string> Network::getPeers() {
     std::vector<std::string> peerList;
     for (const auto &peer : peerTransports) {
-        if (peer.second && peer.second->isOpen()) {
+        if (peer.second.tx && peer.second.tx->isOpen()) {
             peerList.push_back(peer.first); // Only include connected peers
         }
     }
@@ -1100,11 +1104,15 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         data = data.substr(std::strlen(protocolPrefix));
 
     // --- Robust JSON re-assembly ----------------------------------------
-    auto bufIt = partialJsonBuf.find(claimedPeerId);
-    bool assemblingJson = (bufIt != partialJsonBuf.end() && !bufIt->second.empty()) ||
+    auto psIt = peerTransports.find(claimedPeerId);
+    if (psIt == peerTransports.end()) return;
+    auto ps = psIt->second.state;
+
+    bool assemblingJson = (!ps->jsonBuf.empty()) ||
                           (!data.empty() && (data.front() == '{' || data.front() == '['));
     if (assemblingJson) {
-        std::string &buf = partialJsonBuf[claimedPeerId];
+        std::lock_guard<std::mutex> lk(ps->m);
+        std::string &buf = ps->jsonBuf;
         buf += data;
 
         // Remove stray protocol prefixes that may appear if a peer sends
@@ -1135,7 +1143,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
 
         // Complete JSON fragment ready
         data.swap(buf);
-        partialJsonBuf.erase(claimedPeerId);
+        buf.clear();
     }
 
     // === FULL_CHAIN inflight buffer for peer sync ===
@@ -1144,27 +1152,32 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     // and the incoming line looks like raw base64 without any prefix,
     // treat it as a continuation chunk. This makes syncing tolerant of
     // peers that omit the "ALYN|FULL_CHAIN|" prefix on subsequent lines.
-    if (inflightFullChainBase64.count(claimedPeerId) &&
+    if (ps->fullChainActive &&
         data.find('|') == std::string::npos && looksLikeBase64(data))
     {
-        inflightFullChainBase64[claimedPeerId] += data;
-        if (inflightFullChainBase64[claimedPeerId].size() > MAX_INFLIGHT_CHAIN_BYTES) {
-            std::cerr << "[handleIncomingData] \u26a0\ufe0f FULL_CHAIN buffer exceeded limit from "
-                      << claimedPeerId << " ("
-                      << inflightFullChainBase64[claimedPeerId].size()
-                      << " bytes)\n";
-            inflightFullChainBase64.erase(claimedPeerId);
+        {
+            std::lock_guard<std::mutex> lk(ps->m);
+            ps->fullChainB64 += data;
+            if (ps->fullChainB64.size() > MAX_INFLIGHT_CHAIN_BYTES) {
+                std::cerr << "[handleIncomingData] \u26a0\ufe0f FULL_CHAIN buffer exceeded limit from "
+                          << claimedPeerId << " (" << ps->fullChainB64.size() << " bytes)\n";
+                ps->fullChainB64.clear();
+                ps->fullChainActive = false;
+            }
         }
+        if (!ps->fullChainActive) return;
         return;
     }
 
     // Allow initiating a new FULL_CHAIN transfer even if the first chunk
     // arrives without the protocol prefix. Peers may emit the chain as plain
     // base64 lines when joining mid-sync.
-    if (!inflightFullChainBase64.count(claimedPeerId) &&
+    if (!ps->fullChainActive &&
         data.find('|') == std::string::npos && data.size() > 50 && looksLikeBase64(data))
     {
-        inflightFullChainBase64[claimedPeerId] = data;
+        std::lock_guard<std::mutex> lk(ps->m);
+        ps->fullChainB64 = data;
+        ps->fullChainActive = true;
         return;
     }
 
@@ -1174,16 +1187,18 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     if (data.rfind(fullChainPrefix, 0) == 0) {
         const std::string b64part = data.substr(strlen(fullChainPrefix));
 
-        if (inflightFullChainBase64.count(claimedPeerId)) {
-            inflightFullChainBase64[claimedPeerId] += b64part;
-            if (inflightFullChainBase64[claimedPeerId].size() > MAX_INFLIGHT_CHAIN_BYTES) {
-                std::cerr << "[handleIncomingData] ⚠️ FULL_CHAIN buffer exceeded limit from "
-                          << claimedPeerId << " ("
-                          << inflightFullChainBase64[claimedPeerId].size()
-                          << " bytes)\n";
-                inflightFullChainBase64.erase(claimedPeerId);
+        {
+            std::lock_guard<std::mutex> lk(ps->m);
+            if (ps->fullChainActive) {
+                ps->fullChainB64 += b64part;
+                if (ps->fullChainB64.size() > MAX_INFLIGHT_CHAIN_BYTES) {
+                    std::cerr << "[handleIncomingData] ⚠️ FULL_CHAIN buffer exceeded limit from "
+                              << claimedPeerId << " (" << ps->fullChainB64.size() << " bytes)\n";
+                    ps->fullChainB64.clear();
+                    ps->fullChainActive = false;
+                }
+                return;
             }
-            return;
         }
 
         // If this is a *large* message, decode and process now.
@@ -1220,21 +1235,27 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             return;
         } else {
             // Otherwise, treat as multi-chunk and buffer
-            inflightFullChainBase64[claimedPeerId] = b64part;
-            if (inflightFullChainBase64[claimedPeerId].size() > MAX_INFLIGHT_CHAIN_BYTES) {
+            std::lock_guard<std::mutex> lk(ps->m);
+            ps->fullChainB64 = b64part;
+            ps->fullChainActive = true;
+            if (ps->fullChainB64.size() > MAX_INFLIGHT_CHAIN_BYTES) {
                 std::cerr << "[handleIncomingData] ⚠️ FULL_CHAIN buffer exceeded limit from "
-                          << claimedPeerId << " ("
-                          << inflightFullChainBase64[claimedPeerId].size()
-                          << " bytes)\n";
-                inflightFullChainBase64.erase(claimedPeerId);
+                          << claimedPeerId << " (" << ps->fullChainB64.size() << " bytes)\n";
+                ps->fullChainB64.clear();
+                ps->fullChainActive = false;
             }
-	    return;
+            return;
         }
     }
-    if (inflightFullChainBase64.count(claimedPeerId)) {
+    if (ps->fullChainActive) {
         if (data == "BLOCKCHAIN_END") {
             // Finalize and process the buffered base64
-            std::string& b64 = inflightFullChainBase64[claimedPeerId];
+            std::string b64;
+            {
+                std::lock_guard<std::mutex> lk(ps->m);
+                b64.swap(ps->fullChainB64);
+                ps->fullChainActive = false;
+            }
             try {
                 b64 = sanitizeBase64(b64);
                 std::string raw = Crypto::base64Decode(b64, false);
@@ -1256,18 +1277,17 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             } catch (...) {
                 std::cerr << "[handleIncomingData] ❌ Base64 decode failed for FULL_CHAIN (multi-chunk)\n";
             }
-            inflightFullChainBase64.erase(claimedPeerId);
             return;
         }
 
         if (data.find('|') == std::string::npos && looksLikeBase64(data)) {
-            inflightFullChainBase64[claimedPeerId] += data;
-            if (inflightFullChainBase64[claimedPeerId].size() > MAX_INFLIGHT_CHAIN_BYTES) {
+            std::lock_guard<std::mutex> lk(ps->m);
+            ps->fullChainB64 += data;
+            if (ps->fullChainB64.size() > MAX_INFLIGHT_CHAIN_BYTES) {
                 std::cerr << "[handleIncomingData] ⚠️ FULL_CHAIN buffer exceeded limit from "
-                          << claimedPeerId << " ("
-                          << inflightFullChainBase64[claimedPeerId].size()
-                          << " bytes)\n";
-                inflightFullChainBase64.erase(claimedPeerId);
+                          << claimedPeerId << " (" << ps->fullChainB64.size() << " bytes)\n";
+                ps->fullChainB64.clear();
+                ps->fullChainActive = false;
             }
             return;
         }
@@ -1292,9 +1312,14 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     }
 
     // --- Legacy multi-line FULL_CHAIN handler ---
-    if (data == "BLOCKCHAIN_END" && legacyChainBuf.count(claimedPeerId)) {
+    if (data == "BLOCKCHAIN_END" && !ps->legacyChainB64.empty()) {
         try {
-            std::string raw = Crypto::base64Decode(sanitizeBase64(legacyChainBuf[claimedPeerId]), false);
+            std::string raw;
+            {
+                std::lock_guard<std::mutex> lk(ps->m);
+                raw = Crypto::base64Decode(sanitizeBase64(ps->legacyChainB64), false);
+                ps->legacyChainB64.clear();
+            }
             alyncoin::BlockchainProto protoChain;
             if (protoChain.ParseFromString(raw)) {
                 std::vector<Block> blocks;
@@ -1311,13 +1336,21 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         } catch (...) {
             std::cerr << "[handleIncomingData] ❌ Legacy base64 decode failed\n";
         }
-        legacyChainBuf.erase(claimedPeerId);
+        {
+            std::lock_guard<std::mutex> lk(ps->m);
+            ps->legacyChainB64.clear();
+        }
         return;
     }
 
-    if (legacyChainBuf.count(claimedPeerId) && data.rfind(protocolPrefix, 0) == 0) {
+    if (!ps->legacyChainB64.empty() && data.rfind(protocolPrefix, 0) == 0) {
         try {
-            std::string raw = Crypto::base64Decode(sanitizeBase64(legacyChainBuf[claimedPeerId]), false);
+            std::string raw;
+            {
+                std::lock_guard<std::mutex> lk(ps->m);
+                raw = Crypto::base64Decode(sanitizeBase64(ps->legacyChainB64), false);
+                ps->legacyChainB64.clear();
+            }
             alyncoin::BlockchainProto protoChain;
             if (protoChain.ParseFromString(raw)) {
                 std::vector<Block> blocks;
@@ -1334,7 +1367,10 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         } catch (...) {
             std::cerr << "[handleIncomingData] ❌ Legacy base64 decode failed\n";
         }
-        legacyChainBuf.erase(claimedPeerId);
+        {
+            std::lock_guard<std::mutex> lk(ps->m);
+            ps->legacyChainB64.clear();
+        }
         // fall through to process current message normally
     }
 
@@ -1604,7 +1640,8 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     try {
         if (!data.empty() && data.find('|') == std::string::npos &&
             data.size() > 50 && looksLikeBase64(data)) {
-            std::string& buf = legacyChainBuf[claimedPeerId];
+            std::lock_guard<std::mutex> lk(ps->m);
+            std::string& buf = ps->legacyChainB64;
             buf += data;
             std::cerr << "[handleIncomingData] 📡 Legacy base64 chunk received (" << data.size()
                       << " chars, total " << buf.size() << ")\n";
@@ -1622,13 +1659,13 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                     if (peerManager)
                         peerManager->setPeerHeight(claimedPeerId, static_cast<int>(blocks.size()) - 1);
                     std::cerr << "[handleIncomingData] ✅ Synced full chain from peer (legacy base64)\n";
-                    legacyChainBuf.erase(claimedPeerId);
+                    ps->legacyChainB64.clear();
                     return;
                 }
             } catch (...) {
                 // keep accumulating until parse succeeds
             }
-            if (buf.size() > 300000) legacyChainBuf.erase(claimedPeerId);
+            if (buf.size() > 300000) ps->legacyChainB64.clear();
             return;
         }
     } catch (...) {
@@ -1699,7 +1736,7 @@ void Network::broadcastBlock(const Block& block, bool /*force*/)
     // Frame: "ALYN|BLOCK_BROADCAST|" + [base64] + "\n"
     const std::string message = "ALYN|BLOCK_BROADCAST|" + b64 + "\n";
 
-    std::unordered_map<std::string, std::shared_ptr<Transport>> peersCopy;
+    std::unordered_map<std::string, PeerEntry> peersCopy;
     {
         ScopedLockTracer _t("broadcastBlock");
         std::unique_lock<std::timed_mutex> lk(peersMutex, std::defer_lock);
@@ -1711,8 +1748,9 @@ void Network::broadcastBlock(const Block& block, bool /*force*/)
     }
 
     std::set<std::shared_ptr<Transport>> seen;
-    for (auto& [peerId, transport] : peersCopy)
+    for (auto& [peerId, entry] : peersCopy)
     {
+        auto transport = entry.tx;
         if (isSelfPeer(peerId) || !transport || !transport->isOpen()) continue;
         if (!seen.insert(transport).second) continue;
 
@@ -1741,7 +1779,8 @@ void Network::broadcastBlocks(const std::vector<Block>& blocks)
     if (!proto.SerializeToString(&raw) || raw.empty()) return;
     std::string b64 = b64Flat(raw);
     const std::string msg = "ALYN|BLOCK_BATCH|" + b64 + "\n";
-    for (auto& [peerId, transport] : peerTransports) {
+    for (auto& [peerId, entry] : peerTransports) {
+        auto transport = entry.tx;
         if (isSelfPeer(peerId) || !transport || !transport->isOpen()) continue;
         transport->queueWrite(msg);
     }
@@ -1814,7 +1853,8 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
             if (chain.addBlock(blk)) {
                 buf.clear();
                 // Propagate block to all peers except the sender
-                for (auto& [peerId, peerTransport] : peerTransports) {
+                for (auto& [peerId, entry] : peerTransports) {
+                    auto peerTransport = entry.tx;
                     if (peerId == fromPeer) continue;
                     if (peerTransport && peerTransport->isOpen()) {
                         alyncoin::BlockProto proto = blk.toProtobuf();
@@ -1832,7 +1872,8 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
                     for (auto it = buf.begin(); it != buf.end(); ) {
                         if (it->getPreviousHash() == chain.getLatestBlockHash()) {
                             if (chain.addBlock(*it)) {
-                                for (auto& [peerId2, peerTransport2] : peerTransports) {
+                                for (auto& [peerId2, entry2] : peerTransports) {
+                                    auto peerTransport2 = entry2.tx;
                                     if (peerId2 == fromPeer) continue;
                                     if (peerTransport2 && peerTransport2->isOpen()) {
                                         alyncoin::BlockProto proto2 = it->toProtobuf();
@@ -2156,11 +2197,11 @@ bool Network::sendData(std::shared_ptr<Transport> transport, const std::string &
 // The original version (by peerID) can call the socket version
 bool Network::sendData(const std::string &peer, const std::string &data) {
     auto it = peerTransports.find(peer);
-    if (it == peerTransports.end() || !it->second || !it->second->isOpen()) {
+    if (it == peerTransports.end() || !it->second.tx || !it->second.tx->isOpen()) {
         std::cerr << "❌ [ERROR] Peer transport not found or closed: " << peer << "\n";
         return false;
     }
-    return sendData(it->second, data);
+    return sendData(it->second.tx, data);
 }
 
 // ✅ **Request Blockchain Sync from Peers**
@@ -2206,11 +2247,11 @@ void Network::startServer() {
 std::string Network::receiveData(const std::string &peer) {
     try {
         auto it = peerTransports.find(peer);
-        if (it == peerTransports.end() || !it->second) {
+        if (it == peerTransports.end() || !it->second.tx) {
             std::cerr << "❌ [ERROR] Peer not found or transport null: " << peer << std::endl;
             return "";
         }
-        auto transport = it->second;
+        auto transport = it->second.tx;
         return transport->readLineWithTimeout(3); // Assuming Transport has this method!
     } catch (const std::exception &e) {
         std::cerr << "❌ [EXCEPTION] receiveData: " << e.what() << "\n";
@@ -2225,7 +2266,7 @@ void Network::addPeer(const std::string &peer) {
     }
     auto transport = std::make_shared<TcpTransport>(ioContext);
 
-    peerTransports.emplace(peer, transport);
+    peerTransports.emplace(peer, PeerEntry{transport, std::make_shared<PeerState>()});
     std::cout << "📡 Peer added: " << peer << std::endl;
     savePeers(); // ✅ Save immediately
 }
@@ -2322,7 +2363,7 @@ bool Network::connectToNode(const std::string &host, int port)
                 std::cout << "🔁 Already connected to peer: " << peerKey << '\n';
                 return false;
             }
-            peerTransports[peerKey] = transport;
+            peerTransports[peerKey] = {transport, std::make_shared<PeerState>()};
             if (peerManager) peerManager->connectToPeer(peerKey);
         }
 
@@ -2541,12 +2582,12 @@ void Network::sendFullChain(const std::string &peerId)
     {
         std::lock_guard<std::timed_mutex> lock(peersMutex);
         auto it = peerTransports.find(peerId);
-        if (it == peerTransports.end() || !it->second || !it->second->isOpen())
+        if (it == peerTransports.end() || !it->second.tx || !it->second.tx->isOpen())
         {
             std::cerr << "❌ [sendFullChain] No open transport for peer " << peerId << "\n";
             return;
         }
-        targetTransport = it->second;
+        targetTransport = it->second.tx;
     }
     sendFullChain(targetTransport);
 }
@@ -2629,7 +2670,7 @@ void Network::cleanupPeers() {
 
     for (const auto &peer : peerTransports) {
         try {
-            if (!peer.second || !peer.second->isOpen()) {
+            if (!peer.second.tx || !peer.second.tx->isOpen()) {
                 std::cerr << "⚠️ Peer transport closed: " << peer.first << "\n";
                 inactivePeers.push_back(peer.first);
                 continue;
@@ -2637,7 +2678,7 @@ void Network::cleanupPeers() {
 
             // ✅ Use prefixed ping (non-breaking protocol message)
             std::string ping = "ALYN|PING\n";
-            peer.second->queueWrite(ping);
+            peer.second.tx->queueWrite(ping);
             std::cout << "✅ Peer active: " << peer.first << "\n";
         } catch (const std::exception &e) {
             std::cerr << "⚠️ Exception checking peer " << peer.first << ": "
@@ -2711,7 +2752,8 @@ void Network::broadcastRollupBlock(const RollupBlock& rollup) {
     ScopedLockTracer tracer("broadcastRollupBlock");
     std::lock_guard<std::timed_mutex> lock(peersMutex);
 
-    for (const auto& [peerID, transport] : peerTransports) {
+    for (const auto& [peerID, entry] : peerTransports) {
+        auto transport = entry.tx;
         if (transport && transport->isOpen()) {
             try {
                 transport->queueWrite(std::string("ALYN|") + payload + "\n");
