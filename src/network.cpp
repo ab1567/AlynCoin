@@ -91,6 +91,23 @@ static std::string b64Flat(const std::string& bin)
     tmp.erase(std::remove(tmp.begin(), tmp.end(), '\r'), tmp.end());
     return tmp;
 }
+
+// Remove any characters not part of the base64 alphabet. Some peers send
+// malformed FULL_CHAIN fragments that include stray protocol prefixes or JSON
+// snippets. Sanitizing ensures we decode only valid base64 bytes.
+static std::string sanitizeBase64(const std::string& in)
+{
+    std::string out;
+    out.reserve(in.size());
+    for (unsigned char c : in) {
+        if (std::isalnum(c) || c == '+' || c == '/' || c == '=')
+            out.push_back(c);
+    }
+    // Trim padding noise at the end
+    while (out.size() % 4)
+        out.pop_back();
+    return out;
+}
 static std::map<uint64_t, Block> futureBlockBuffer;
 PubSubRouter g_pubsub;
 namespace fs = std::filesystem;
@@ -1177,13 +1194,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         // BLOCKCHAIN_END marker to delimit transfers.
         if (b64part.size() > 10000) {
             try {
-                std::string cleanPart = b64part;
-                size_t extraPos = cleanPart.find("ALYN|");
-                if (extraPos != std::string::npos)
-                    cleanPart.erase(extraPos);
-                while (cleanPart.size() % 4)
-                    cleanPart.pop_back();
-
+                std::string cleanPart = sanitizeBase64(b64part);
                 std::string raw = Crypto::base64Decode(cleanPart, false);
                 alyncoin::BlockchainProto protoChain;
                 if (!protoChain.ParseFromString(raw)) {
@@ -1225,11 +1236,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             // Finalize and process the buffered base64
             std::string& b64 = inflightFullChainBase64[claimedPeerId];
             try {
-                size_t extraPos = b64.find("ALYN|");
-                if (extraPos != std::string::npos)
-                    b64.erase(extraPos);
-                while (b64.size() % 4)
-                    b64.pop_back();
+                b64 = sanitizeBase64(b64);
                 std::string raw = Crypto::base64Decode(b64, false);
                 alyncoin::BlockchainProto protoChain;
                 if (!protoChain.ParseFromString(raw)) {
@@ -1284,7 +1291,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     // --- Legacy multi-line FULL_CHAIN handler ---
     if (data == "BLOCKCHAIN_END" && legacyChainBuf.count(claimedPeerId)) {
         try {
-            std::string raw = Crypto::base64Decode(legacyChainBuf[claimedPeerId], false);
+            std::string raw = Crypto::base64Decode(sanitizeBase64(legacyChainBuf[claimedPeerId]), false);
             alyncoin::BlockchainProto protoChain;
             if (protoChain.ParseFromString(raw)) {
                 std::vector<Block> blocks;
@@ -1307,7 +1314,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
 
     if (legacyChainBuf.count(claimedPeerId) && data.rfind(protocolPrefix, 0) == 0) {
         try {
-            std::string raw = Crypto::base64Decode(legacyChainBuf[claimedPeerId], false);
+            std::string raw = Crypto::base64Decode(sanitizeBase64(legacyChainBuf[claimedPeerId]), false);
             alyncoin::BlockchainProto protoChain;
             if (protoChain.ParseFromString(raw)) {
                 std::vector<Block> blocks;
@@ -1339,7 +1346,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         infl.base64 = data.substr(strlen(blockBroadcastPrefix));
         infl.active = true;
         try {
-            std::string raw = Crypto::base64Decode(infl.base64, false);
+            std::string raw = Crypto::base64Decode(sanitizeBase64(infl.base64), false);
             alyncoin::BlockProto proto;
             if (proto.ParseFromString(raw) && proto.hash().size() == 64 &&
                 !proto.previous_hash().empty())
@@ -1360,7 +1367,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         infl.base64 = data.substr(strlen(blockBatchPrefix));
         infl.active = true;
         try {
-            std::string raw = Crypto::base64Decode(infl.base64, false);
+            std::string raw = Crypto::base64Decode(sanitizeBase64(infl.base64), false);
             alyncoin::BlockchainProto proto;
             if (proto.ParseFromString(raw) && proto.blocks_size() > 0) {
                 handleBase64Proto(claimedPeerId, blockBatchPrefix,
@@ -1377,7 +1384,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     if (inflIt != inflight.end() && looksLikeBase64(data)) {
         inflIt->second.base64 += data;
         try {
-            std::string raw = Crypto::base64Decode(inflIt->second.base64, false);
+            std::string raw = Crypto::base64Decode(sanitizeBase64(inflIt->second.base64), false);
             if (inflIt->second.prefix == blockBroadcastPrefix) {
                 alyncoin::BlockProto proto;
                 if (proto.ParseFromString(raw) && proto.hash().size() == 64 &&
@@ -1599,7 +1606,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             std::cerr << "[handleIncomingData] 📡 Legacy base64 chunk received (" << data.size()
                       << " chars, total " << buf.size() << ")\n";
             try {
-                std::string raw = Crypto::base64Decode(buf, false);
+                std::string raw = Crypto::base64Decode(sanitizeBase64(buf), false);
                 alyncoin::BlockchainProto protoChain;
                 if (protoChain.ParseFromString(raw)) {
                     std::vector<Block> blocks;
@@ -1629,7 +1636,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     try {
         if (!data.empty() && data.size() > 50 && data.find('|') == std::string::npos &&
             looksLikeBase64(data)) {
-            std::string decoded = Crypto::base64Decode(data, false);
+            std::string decoded = Crypto::base64Decode(sanitizeBase64(data), false);
             alyncoin::BlockProto proto;
             if (proto.ParseFromString(decoded)) {
                 Block blk = Block::fromProto(proto, false);
@@ -1880,7 +1887,7 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
             Block blk;
             bool ok = false;
             try {
-                std::string raw = Crypto::base64Decode(b64, false);
+                std::string raw = Crypto::base64Decode(sanitizeBase64(b64), false);
                 alyncoin::BlockProto proto;
                 bool parseOk = proto.ParseFromString(raw);
                 if (parseOk && proto.hash().size() == 64 && !proto.previous_hash().empty()) {
@@ -1894,7 +1901,7 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
             return;
         } else if (prefix == "BLOCK_BATCH|") {
             try {
-                std::string raw = Crypto::base64Decode(b64, false);
+                std::string raw = Crypto::base64Decode(sanitizeBase64(b64), false);
                 alyncoin::BlockchainProto protoChain;
                 if (protoChain.ParseFromString(raw)) {
                     for (const auto& pb : protoChain.blocks()) {
@@ -1914,7 +1921,7 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
             return;
         } else if (prefix == "FULL_CHAIN|") {
             try {
-                std::string raw = Crypto::base64Decode(b64, false);
+                std::string raw = Crypto::base64Decode(sanitizeBase64(b64), false);
                 alyncoin::BlockchainProto protoChain;
                 if (protoChain.ParseFromString(raw)) {
                     std::vector<Block> receivedBlocks;
