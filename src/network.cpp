@@ -18,6 +18,7 @@
 #include <set>
 #include <algorithm>
 #include <unordered_map>
+#include <cstring>
 #include <chrono>
 #include <json/json.h>
 #include <sstream>
@@ -423,13 +424,18 @@ void Network::sendMessage(std::shared_ptr<Transport> transport, const std::strin
 
 //
 void Network::sendMessageToPeer(const std::string &peer, const std::string &message) {
-    auto it = peerTransports.find(peer);
-    if (it == peerTransports.end() || !it->second.tx || !it->second.tx->isOpen()) {
-        std::cerr << "❌ [sendMessageToPeer] Peer not found or transport closed: " << peer << "\n";
-        return;
+    std::shared_ptr<Transport> tx;
+    {
+        std::lock_guard<std::timed_mutex> lk(peersMutex);
+        auto it = peerTransports.find(peer);
+        if (it == peerTransports.end() || !it->second.tx || !it->second.tx->isOpen()) {
+            std::cerr << "❌ [sendMessageToPeer] Peer not found or transport closed: " << peer << "\n";
+            return;
+        }
+        tx = it->second.tx;
     }
     try {
-        it->second.tx->queueWrite(message + "\n");
+        tx->queueWrite(message + "\n");
         std::cout << "📡 Sent message to peer " << peer << ": " << message << std::endl;
     } catch (const std::exception &e) {
         std::cerr << "❌ [sendMessageToPeer] Failed to send: " << e.what() << "\n";
@@ -1099,14 +1105,47 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     static constexpr const char* blockBatchPrefix   = "BLOCK_BATCH|";
     static constexpr size_t MAX_INFLIGHT_CHAIN_BYTES = 20 * 1024 * 1024; // 20MB
 
-    // Strip protocol prefix (so all checks below work)
-    if (data.rfind(protocolPrefix, 0) == 0)
-        data = data.substr(std::strlen(protocolPrefix));
-
-    // --- Robust JSON re-assembly ----------------------------------------
+    // Prefix reassembly to tolerate network fragmentation
     auto psIt = peerTransports.find(claimedPeerId);
     if (psIt == peerTransports.end()) return;
     auto ps = psIt->second.state;
+
+    const size_t prefLen = std::strlen(protocolPrefix);
+    {
+        std::lock_guard<std::mutex> lk(ps->m);
+        if (!ps->prefixBuf.empty()) {
+            data = ps->prefixBuf + data;
+            ps->prefixBuf.clear();
+        }
+    }
+
+    if (data.size() < prefLen) {
+        if (std::memcmp(protocolPrefix, data.data(), data.size()) == 0) {
+            std::lock_guard<std::mutex> lk(ps->m);
+            ps->prefixBuf = data;
+            return;
+        }
+    }
+
+    if (data.rfind(protocolPrefix, 0) == 0)
+        data = data.substr(prefLen);
+    else {
+        size_t pos = data.find(protocolPrefix);
+        if (pos != std::string::npos) {
+            data = data.substr(pos + prefLen);
+        } else {
+            for (size_t i = 1; i < prefLen && i <= data.size(); ++i) {
+                if (data.compare(data.size() - i, i, protocolPrefix, 0, i) == 0) {
+                    std::lock_guard<std::mutex> lk(ps->m);
+                    ps->prefixBuf = data.substr(data.size() - i);
+                    data.erase(data.size() - i);
+                    break;
+                }
+            }
+        }
+    }
+
+    // --- Robust JSON re-assembly ----------------------------------------
 
     bool assemblingJson = (!ps->jsonBuf.empty()) ||
                           (!data.empty() && (data.front() == '{' || data.front() == '['));
@@ -2214,19 +2253,27 @@ bool Network::sendData(std::shared_ptr<Transport> transport, const std::string &
 }
 // The original version (by peerID) can call the socket version
 bool Network::sendData(const std::string &peer, const std::string &data) {
-    auto it = peerTransports.find(peer);
-    if (it == peerTransports.end() || !it->second.tx || !it->second.tx->isOpen()) {
-        std::cerr << "❌ [ERROR] Peer transport not found or closed: " << peer << "\n";
-        return false;
+    std::shared_ptr<Transport> tx;
+    {
+        std::lock_guard<std::timed_mutex> lk(peersMutex);
+        auto it = peerTransports.find(peer);
+        if (it == peerTransports.end() || !it->second.tx || !it->second.tx->isOpen()) {
+            std::cerr << "❌ [ERROR] Peer transport not found or closed: " << peer << "\n";
+            return false;
+        }
+        tx = it->second.tx;
     }
-    return sendData(it->second.tx, data);
+    return sendData(tx, data);
 }
 
 // ✅ **Request Blockchain Sync from Peers**
 std::string Network::requestBlockchainSync(const std::string &peer) {
-    if (peerTransports.find(peer) == peerTransports.end()) {
-        std::cerr << "❌ [ERROR] Peer not found: " << peer << "\n";
-        return "";
+    {
+        std::lock_guard<std::timed_mutex> lk(peersMutex);
+        if (peerTransports.find(peer) == peerTransports.end()) {
+            std::cerr << "❌ [ERROR] Peer not found: " << peer << "\n";
+            return "";
+        }
     }
     std::cout << "📡 Requesting blockchain sync from: " << peer << "\n";
     if (!sendData(peer, "ALYN|REQUEST_BLOCKCHAIN")) {
@@ -2264,12 +2311,16 @@ void Network::startServer() {
 // ✅ **Receive Data from Peer (Blocking)**
 std::string Network::receiveData(const std::string &peer) {
     try {
-        auto it = peerTransports.find(peer);
-        if (it == peerTransports.end() || !it->second.tx) {
-            std::cerr << "❌ [ERROR] Peer not found or transport null: " << peer << std::endl;
-            return "";
+        std::shared_ptr<Transport> transport;
+        {
+            std::lock_guard<std::timed_mutex> lk(peersMutex);
+            auto it = peerTransports.find(peer);
+            if (it == peerTransports.end() || !it->second.tx) {
+                std::cerr << "❌ [ERROR] Peer not found or transport null: " << peer << std::endl;
+                return "";
+            }
+            transport = it->second.tx;
         }
-        auto transport = it->second.tx;
         return transport->readLineWithTimeout(3); // Assuming Transport has this method!
     } catch (const std::exception &e) {
         std::cerr << "❌ [EXCEPTION] receiveData: " << e.what() << "\n";

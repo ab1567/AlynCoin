@@ -12,6 +12,7 @@ struct PeerState {
     std::string fullChainB64;
     std::string legacyChainB64;
     std::string jsonBuf;
+    std::string prefixBuf;      // holds partial protocol prefix across chunks
     std::vector<Block> orphanBuf;
     bool        fullChainActive{false};
     std::mutex  m;
