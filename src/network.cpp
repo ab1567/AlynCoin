@@ -1249,19 +1249,27 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     }
     if (ps->fullChainActive) {
         if (data == "BLOCKCHAIN_END") {
-            // Finalize and process the buffered base64
+            // we **try** to decode – but only give up when it succeeds
             std::string b64;
             {
                 std::lock_guard<std::mutex> lk(ps->m);
                 b64.swap(ps->fullChainB64);
-                ps->fullChainActive = false;
+                /* keep the buffer alive – we will clear it only
+                   when the protobuf parses successfully */
             }
             try {
                 b64 = sanitizeBase64(b64);
                 std::string raw = Crypto::base64Decode(b64, false);
                 alyncoin::BlockchainProto protoChain;
                 if (!protoChain.ParseFromString(raw)) {
-                    std::cerr << "[handleIncomingData] ❌ Invalid FULL_CHAIN protobuf (multi-chunk)\n";
+                    /* decoding failed →  keep collecting;  re-arm state */
+                    std::cerr << "[handleIncomingData] ⚠️  FULL_CHAIN parse failed (still waiting for more chunks)...\n";
+                    {
+                        std::lock_guard<std::mutex> lk(ps->m);
+                        ps->fullChainB64.swap(b64);       // restore
+                        ps->fullChainActive = true;
+                    }
+                    return;
                 } else {
                     std::vector<Block> blocks;
                     for (const auto& pb : protoChain.blocks()) {
@@ -1276,6 +1284,16 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 }
             } catch (...) {
                 std::cerr << "[handleIncomingData] ❌ Base64 decode failed for FULL_CHAIN (multi-chunk)\n";
+                {
+                    std::lock_guard<std::mutex> lk(ps->m);
+                    ps->fullChainB64.swap(b64);
+                    ps->fullChainActive = true;
+                }
+                return;
+            }
+            {
+                std::lock_guard<std::mutex> lk(ps->m);
+                ps->fullChainActive = false;
             }
             return;
         }
