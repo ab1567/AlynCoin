@@ -559,25 +559,30 @@ void Network::connectToPeer(const std::string &ip, short port) {
 // ✅ **Broadcast peer list to all connected nodes**
 void Network::broadcastPeerList() {
     ScopedLockTracer tracer("broadcastPeerList");
-    std::lock_guard<std::timed_mutex> lock(peersMutex);
-    if (peerTransports.empty()) return;
+    std::vector<std::string> peers;
+    {
+        std::lock_guard<std::timed_mutex> lock(peersMutex);
+        if (peerTransports.empty()) return;
+        for (const auto &[peerAddr, _] : peerTransports) {
+            if (peerAddr.find(":") == std::string::npos) continue;
+            peers.push_back(peerAddr);
+        }
+    }
 
     Json::Value peerListJson;
     peerListJson["type"] = "peer_list";
     peerListJson["data"] = Json::arrayValue;
-
-    for (const auto &[peerAddr, _] : peerTransports) {
-        if (peerAddr.find(":") == std::string::npos) continue;
+    for (const auto &peerAddr : peers) {
         peerListJson["data"].append(peerAddr);
     }
 
     Json::StreamWriterBuilder writer;
-     writer["indentation"] = "";
+    writer["indentation"] = "";
     std::string peerListMessage = Json::writeString(writer, peerListJson);
 
-    for (const auto &[peerAddr, _] : peerTransports) {
+    for (const auto &peerAddr : peers) {
         sendData(peerAddr, "ALYN|" + peerListMessage);
-        }
+    }
 
 }
 
@@ -2734,37 +2739,41 @@ void Network::sendFullChain(std::shared_ptr<Transport> transport)
 // cleanup
 void Network::cleanupPeers() {
     ScopedLockTracer tracer("cleanupPeers");
-    std::lock_guard<std::timed_mutex> lock(peersMutex);
     std::vector<std::string> inactivePeers;
+    {
+        std::lock_guard<std::timed_mutex> lock(peersMutex);
+        for (const auto &peer : peerTransports) {
+            try {
+                if (!peer.second.tx || !peer.second.tx->isOpen()) {
+                    std::cerr << "⚠️ Peer transport closed: " << peer.first << "\n";
+                    inactivePeers.push_back(peer.first);
+                    continue;
+                }
 
-    for (const auto &peer : peerTransports) {
-        try {
-            if (!peer.second.tx || !peer.second.tx->isOpen()) {
-                std::cerr << "⚠️ Peer transport closed: " << peer.first << "\n";
+                // ✅ Use prefixed ping (non-breaking protocol message)
+                std::string ping = "ALYN|PING\n";
+                peer.second.tx->queueWrite(ping);
+                std::cout << "✅ Peer active: " << peer.first << "\n";
+            } catch (const std::exception &e) {
+                std::cerr << "⚠️ Exception checking peer " << peer.first << ": "
+                          << e.what() << "\n";
                 inactivePeers.push_back(peer.first);
-                continue;
             }
+        }
 
-            // ✅ Use prefixed ping (non-breaking protocol message)
-            std::string ping = "ALYN|PING\n";
-            peer.second.tx->queueWrite(ping);
-            std::cout << "✅ Peer active: " << peer.first << "\n";
-        } catch (const std::exception &e) {
-            std::cerr << "⚠️ Exception checking peer " << peer.first << ": "
-                      << e.what() << "\n";
-            inactivePeers.push_back(peer.first);
+        for (const auto &peer : inactivePeers) {
+            peerTransports.erase(peer);
+            std::cout << "🗑️ Removed inactive peer: " << peer << "\n";
+        }
+        if (!inactivePeers.empty()) {
+            savePeers();
         }
     }
 
-    // Remove inactive peers
-    for (const auto &peer : inactivePeers) {
-        peerTransports.erase(peer);
-        std::cout << "🗑️ Removed inactive peer: " << peer << "\n";
-    }
     if (!inactivePeers.empty()) {
         broadcastPeerList();
-        savePeers();
     }
+
 }
 
 // Add methods to handle rollup block synchronization
