@@ -1283,8 +1283,11 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         if (!data.empty() && data.front() == '{') {
             // Defer to JSON handler below without clearing buffer
         } else {
-            // Unexpected message while syncing: abandon buffer and fall through
-            inflightFullChainBase64.erase(claimedPeerId);
+            // Unexpected data while syncing. Preserve buffer so the FULL_CHAIN
+            // transfer can complete instead of aborting prematurely.
+            std::cerr << "[handleIncomingData] ⚠️ Unexpected data while syncing FULL_CHAIN from "
+                      << claimedPeerId << ". Buffer preserved.\n";
+            return;
         }
     }
 
