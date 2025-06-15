@@ -1315,12 +1315,13 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 std::string raw = Crypto::base64Decode(b64, false);
                 alyncoin::BlockchainProto protoChain;
                 if (!protoChain.ParseFromString(raw)) {
-                    /* decoding failed →  keep collecting;  re-arm state */
-                    std::cerr << "[handleIncomingData] ⚠️  FULL_CHAIN parse failed (still waiting for more chunks)...\n";
+                    std::cerr << "[handleIncomingData] ⚠️  FULL_CHAIN parse failed. Requesting re-sync...\n";
+                    if (transport && transport->isOpen())
+                        transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
                     {
                         std::lock_guard<std::mutex> lk(ps->m);
-                        ps->fullChainB64.swap(b64);       // restore
-                        ps->fullChainActive = true;
+                        ps->fullChainB64.clear();
+                        ps->fullChainActive = false;
                     }
                     return;
                 } else {
