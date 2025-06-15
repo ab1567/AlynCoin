@@ -105,6 +105,8 @@ public:
     void autoMineBlock();
     void periodicSync();
     void broadcastRollupBlock(const RollupBlock &rollupBlock);
+    void broadcastEpochProof(int epochIdx, const std::string &rootHash,
+                             const std::vector<uint8_t> &proof);
     void handleNewRollupBlock(const RollupBlock &newRollupBlock);
     void receiveRollupBlock(const std::string &data);
     void listenForConnections();

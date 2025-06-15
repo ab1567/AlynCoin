@@ -60,6 +60,13 @@ static std::unordered_set<std::string> seenTxHashes;
 static std::mutex seenTxMutex;
 static std::unordered_set<std::string> seenBlockHashes;
 static std::mutex seenBlockMutex;
+
+struct EpochProofEntry {
+    std::string root;
+    std::vector<uint8_t> proof;
+};
+static std::unordered_map<int, EpochProofEntry> receivedEpochProofs;
+static std::mutex epochProofMutex;
 struct InFlightData {
     std::string peer;
     std::string prefix;
@@ -850,6 +857,7 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
         hs["capabilities"] = Json::arrayValue;
         hs["capabilities"].append("full");
         hs["capabilities"].append("miner");
+        hs["capabilities"].append("agg_proof_v1");
         hs["height"]      = Blockchain::getInstance().getHeight();
 
         Json::StreamWriterBuilder wr;  wr["indentation"] = "";
@@ -1108,6 +1116,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     static constexpr const char* rollupPrefix       = "ROLLUP_BLOCK|";
     static constexpr const char* blockBroadcastPrefix = "BLOCK_BROADCAST|";
     static constexpr const char* blockBatchPrefix   = "BLOCK_BATCH|";
+    static constexpr const char* aggProofPrefix     = "AGG_PROOF|";
     static constexpr size_t MAX_INFLIGHT_CHAIN_BYTES = 20 * 1024 * 1024; // 20MB
 
     // Prefix reassembly to tolerate network fragmentation
@@ -1478,6 +1487,16 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         } catch (...) {
             /* wait for more lines */
         }
+        return;
+    }
+    if (data.rfind(aggProofPrefix, 0) == 0) {
+        InFlightData& infl = inflight[claimedPeerId];
+        infl.peer   = claimedPeerId;
+        infl.prefix = aggProofPrefix;
+        infl.base64 = data.substr(strlen(aggProofPrefix));
+        infl.active = true;
+        // For now just log receipt; verification handled elsewhere
+        std::cerr << "[handleIncomingData] Received agg proof chunk from " << claimedPeerId << " size=" << infl.base64.size() << "\n";
         return;
     }
 
@@ -2057,6 +2076,25 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
                 std::cerr << "[handleBase64Proto] Exception decoding base64 full chain!\n";
             }
             return;
+        } else if (prefix == "AGG_PROOF|") {
+            try {
+                size_t p1 = b64.find('|');
+                size_t p2 = b64.find('|', p1 + 1);
+                if (p1 == std::string::npos || p2 == std::string::npos) return;
+                int epoch = std::stoi(b64.substr(0, p1));
+                std::string root = b64.substr(p1 + 1, p2 - p1 - 1);
+                std::string proofB64 = b64.substr(p2 + 1);
+                std::string raw = Crypto::base64Decode(proofB64, false);
+                std::vector<uint8_t> proof(raw.begin(), raw.end());
+                {
+                    std::lock_guard<std::mutex> lk(epochProofMutex);
+                    receivedEpochProofs[epoch] = {root, proof};
+                }
+                std::cerr << "[handleBase64Proto] Received aggregated proof for epoch " << epoch << "\n";
+            } catch (...) {
+                std::cerr << "[handleBase64Proto] Failed to process AGG_PROOF message\n";
+            }
+            return;
         }
     } catch (...) {
         std::cerr << "[handleBase64Proto] Unknown exception\n";
@@ -2449,6 +2487,7 @@ bool Network::connectToNode(const std::string &host, int port)
     handshake["capabilities"]= Json::arrayValue;
     handshake["capabilities"].append("full");
     handshake["capabilities"].append("miner");
+    handshake["capabilities"].append("agg_proof_v1");
     handshake["height"]      = Blockchain::getInstance().getHeight();
 
         Json::StreamWriterBuilder wr;  wr["indentation"] = "";
@@ -2839,6 +2878,21 @@ void Network::broadcastRollupBlock(const RollupBlock& rollup) {
             } catch (const std::exception& e) {
                 std::cerr << "❌ Failed to send rollup block to " << peerID << ": " << e.what() << "\n";
             }
+        }
+    }
+}
+
+void Network::broadcastEpochProof(int epochIdx, const std::string& rootHash,
+                                  const std::vector<uint8_t>& proofBytes) {
+    std::string b64 = Crypto::base64Encode(std::string(proofBytes.begin(), proofBytes.end()));
+    std::string payload = "AGG_PROOF|" + std::to_string(epochIdx) + "|" + rootHash + "|" + b64;
+
+    ScopedLockTracer tracer("broadcastEpochProof");
+    std::lock_guard<std::timed_mutex> lock(peersMutex);
+    for (const auto& [peerID, entry] : peerTransports) {
+        auto transport = entry.tx;
+        if (transport && transport->isOpen()) {
+            transport->queueWrite(std::string("ALYN|") + payload + "\n");
         }
     }
 }
