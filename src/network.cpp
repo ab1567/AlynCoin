@@ -340,9 +340,12 @@ Network::Network(unsigned short port, Blockchain* blockchain, PeerBlacklist* bla
 
 Network::~Network() {
     try {
+        isRunning = false;
         ioContext.stop();
         acceptor.close();
         if (listenerThread.joinable()) listenerThread.join();
+        if (serverThread.joinable()) serverThread.join();
+        if (autoMinerThread.joinable()) autoMinerThread.join();
         delete peerManager;
         peerManager = nullptr;
         std::cout << "✅ Network instance cleaned up safely." << std::endl;
@@ -364,8 +367,8 @@ Network::~Network() {
              std::cerr << "❌ [Network] Accept error: " << ec.message() << "\n";
          }
 
-        // 🔁 Queue the next accept to avoid recursive call after destructor
-        ioContext.post([this]{ listenForConnections(); });
+        // Queue the next accept
+        listenForConnections();
     });
 }
 //
@@ -377,8 +380,8 @@ void Network::start() {
 
 // ✅ **Auto-Mining Background Thread**
 void Network::autoMineBlock() {
-  std::thread([this]() {
-    while (true) {
+  autoMinerThread = std::thread([this]() {
+    while (isRunning) {
       std::this_thread::sleep_for(std::chrono::seconds(5));
 
       Blockchain &blockchain = *this->blockchain;
@@ -420,13 +423,13 @@ void Network::autoMineBlock() {
         }
       }
     }
-  }).detach();
+  });
 }
 
 //
 void Network::broadcastMessage(const std::string &message) {
     ScopedLockTracer tracer("broadcastMessage");
-    std::lock_guard<std::timed_mutex> lock(peersMutex);
+    std::shared_lock<std::shared_mutex> lock(peersMutex);
     for (const auto &peer : peerTransports) {
         auto transport = peer.second.tx;
         if (transport && transport->isOpen()) {
@@ -456,7 +459,7 @@ void Network::sendMessage(std::shared_ptr<Transport> transport, const std::strin
 void Network::sendMessageToPeer(const std::string &peer, const std::string &message) {
     std::shared_ptr<Transport> tx;
     {
-        std::lock_guard<std::timed_mutex> lk(peersMutex);
+        std::shared_lock<std::shared_mutex> lk(peersMutex);
         auto it = peerTransports.find(peer);
         if (it == peerTransports.end() || !it->second.tx || !it->second.tx->isOpen()) {
             std::cerr << "❌ [sendMessageToPeer] Peer not found or transport closed: " << peer << "\n";
@@ -592,7 +595,7 @@ void Network::broadcastPeerList() {
     ScopedLockTracer tracer("broadcastPeerList");
     std::vector<std::string> peers;
     {
-        std::lock_guard<std::timed_mutex> lock(peersMutex);
+        std::shared_lock<std::shared_mutex> lock(peersMutex);
         if (peerTransports.empty()) return;
         for (const auto &[peerAddr, _] : peerTransports) {
             if (peerAddr.find(":") == std::string::npos) continue;
@@ -841,7 +844,7 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
 
             {
                 ScopedLockTracer t("handlePeer/fallback");
-                std::lock_guard<std::timed_mutex> lk(peersMutex);
+                std::unique_lock<std::shared_mutex> lk(peersMutex);
                 peerTransports[realPeerId] = {transport, std::make_shared<PeerState>()};
             }
             if (!handshakeLine.empty())
@@ -862,7 +865,7 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
     // 3. Add (or update) the peer socket
     {
         ScopedLockTracer t("handlePeer/register");
-        std::lock_guard<std::timed_mutex> lk(peersMutex);
+        std::unique_lock<std::shared_mutex> lk(peersMutex);
 
         auto it = peerTransports.find(claimedPeerId);
         if (it != peerTransports.end()) {
@@ -1027,7 +1030,7 @@ void Network::autoSyncIfBehind() {
     size_t myHeight = blockchain.getHeight();
     std::string myTip = blockchain.getLatestBlockHash();
 
-    std::lock_guard<std::timed_mutex> lock(peersMutex);
+    std::shared_lock<std::shared_mutex> lock(peersMutex);
     for (const auto &[peerAddr, entry] : peerTransports) {
         auto peerTransport = entry.tx;
         if (!peerTransport || !peerTransport->isOpen()) continue;
@@ -1109,7 +1112,7 @@ void Network::connectToDiscoveredPeers() {
 void Network::periodicSync()
 {
     ScopedLockTracer tracer("periodicSync");
-    std::lock_guard<std::timed_mutex> lock(peersMutex);
+    std::shared_lock<std::shared_mutex> lock(peersMutex);
 
     for (const auto &p : peerTransports)
     {
@@ -1736,7 +1739,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 out["type"] = "peer_list";
                 out["data"] = Json::arrayValue;
                 {
-                    std::lock_guard<std::timed_mutex> lk(peersMutex);
+                    std::shared_lock<std::shared_mutex> lk(peersMutex);
                     for (const auto& kv : peerTransports)
                         out["data"].append(kv.first);
                 }
@@ -1918,8 +1921,8 @@ void Network::broadcastBlock(const Block& block, bool /*force*/)
     std::unordered_map<std::string, PeerEntry> peersCopy;
     {
         ScopedLockTracer _t("broadcastBlock");
-        std::unique_lock<std::timed_mutex> lk(peersMutex, std::defer_lock);
-        if (!lk.try_lock_for(std::chrono::milliseconds(500))) {
+        std::unique_lock<std::shared_mutex> lk(peersMutex, std::try_to_lock);
+        if (!lk.owns_lock()) {
             std::cerr << "⚠️ [broadcastBlock] peersMutex lock timeout\n";
             return;
         }
@@ -2414,7 +2417,7 @@ bool Network::sendData(std::shared_ptr<Transport> transport, const std::string &
 bool Network::sendData(const std::string &peer, const std::string &data) {
     std::shared_ptr<Transport> tx;
     {
-        std::lock_guard<std::timed_mutex> lk(peersMutex);
+        std::shared_lock<std::shared_mutex> lk(peersMutex);
         auto it = peerTransports.find(peer);
         if (it == peerTransports.end() || !it->second.tx || !it->second.tx->isOpen()) {
             std::cerr << "❌ [ERROR] Peer transport not found or closed: " << peer << "\n";
@@ -2428,7 +2431,7 @@ bool Network::sendData(const std::string &peer, const std::string &data) {
 // ✅ **Request Blockchain Sync from Peers**
 std::string Network::requestBlockchainSync(const std::string &peer) {
     {
-        std::lock_guard<std::timed_mutex> lk(peersMutex);
+        std::shared_lock<std::shared_mutex> lk(peersMutex);
         if (peerTransports.find(peer) == peerTransports.end()) {
             std::cerr << "❌ [ERROR] Peer not found: " << peer << "\n";
             return "";
@@ -2450,7 +2453,7 @@ void Network::startServer() {
         ioContext.restart();  // Must come before async_accept
         listenForConnections();
 
-        std::thread ioThread([this]() {
+        serverThread = std::thread([this]() {
             std::cout << "🚀 IO context thread started for port " << port << "\n";
             try {
                 ioContext.run();
@@ -2460,7 +2463,7 @@ void Network::startServer() {
             }
         });
 
-        ioThread.detach();  // Detach safely
+        
     } catch (const std::exception &e) {
         std::cerr << "❌ [ERROR] Server failed to start: " << e.what() << "\n";
         std::cerr << "⚠️ Try using a different port or checking if another instance is running.\n";
@@ -2472,7 +2475,7 @@ std::string Network::receiveData(const std::string &peer) {
     try {
         std::shared_ptr<Transport> transport;
         {
-            std::lock_guard<std::timed_mutex> lk(peersMutex);
+            std::shared_lock<std::shared_mutex> lk(peersMutex);
             auto it = peerTransports.find(peer);
             if (it == peerTransports.end() || !it->second.tx) {
                 std::cerr << "❌ [ERROR] Peer not found or transport null: " << peer << std::endl;
@@ -2545,7 +2548,7 @@ void Network::startReadLoop(const std::string&           peerId,
             std::cerr << "🔌 disconnect " << peerId
                       << " : " << ec.message() << '\n';
 
-            std::lock_guard<std::timed_mutex> lk(peersMutex);
+            std::unique_lock<std::shared_mutex> lk(peersMutex);
             peerTransports.erase(peerId);
             return;
         }
@@ -2588,7 +2591,7 @@ bool Network::connectToNode(const std::string &host, int port)
         // peerKey already set above
         {
             ScopedLockTracer _t("connectToNode");
-            std::lock_guard<std::timed_mutex> g(peersMutex);
+            std::unique_lock<std::shared_mutex> g(peersMutex);
 
             if (peerTransports.count(peerKey)) {
                 std::cout << "🔁 Already connected to peer: " << peerKey << '\n';
@@ -2638,7 +2641,7 @@ bool Network::connectToNode(const std::string &host, int port)
                 }
                 {
                     ScopedLockTracer _t("connectToNode/remoteHs");
-                    std::lock_guard<std::timed_mutex> lk(peersMutex);
+                    std::unique_lock<std::shared_mutex> lk(peersMutex);
                     auto it = peerTransports.find(peerKey);
                     if (it != peerTransports.end() && it->second.state)
                         it->second.state->supportsAggProof = agg;
@@ -2727,7 +2730,7 @@ void Network::loadPeers() {
 
 //
 void Network::scanForPeers() {
-    std::lock_guard<std::timed_mutex> lock(peersMutex);
+    std::shared_lock<std::shared_mutex> lock(peersMutex);
     if (!peerTransports.empty()) {
         std::cout << "✅ [scanForPeers] Mesh established, skipping DNS scan.\n";
         return;
@@ -2826,7 +2829,7 @@ void Network::sendFullChain(const std::string &peerId)
 {
     std::shared_ptr<Transport> targetTransport;
     {
-        std::lock_guard<std::timed_mutex> lock(peersMutex);
+        std::shared_lock<std::shared_mutex> lock(peersMutex);
         auto it = peerTransports.find(peerId);
         if (it == peerTransports.end() || !it->second.tx || !it->second.tx->isOpen())
         {
@@ -2913,7 +2916,7 @@ void Network::cleanupPeers() {
     ScopedLockTracer tracer("cleanupPeers");
     std::vector<std::string> inactivePeers;
     {
-        std::lock_guard<std::timed_mutex> lock(peersMutex);
+        std::unique_lock<std::shared_mutex> lock(peersMutex);
         for (const auto &peer : peerTransports) {
             try {
                 if (!peer.second.tx || !peer.second.tx->isOpen()) {
@@ -3000,7 +3003,7 @@ void Network::broadcastRollupBlock(const RollupBlock& rollup) {
     std::string payload = "ROLLUP_BLOCK|" + rollup.serialize();
 
     ScopedLockTracer tracer("broadcastRollupBlock");
-    std::lock_guard<std::timed_mutex> lock(peersMutex);
+    std::shared_lock<std::shared_mutex> lock(peersMutex);
 
     for (const auto& [peerID, entry] : peerTransports) {
         auto transport = entry.tx;
@@ -3023,7 +3026,7 @@ void Network::broadcastEpochProof(int epochIdx, const std::string& rootHash,
     std::string payload = "AGG_PROOF|" + std::to_string(epochIdx) + "|" + rootHash + "|" + b64;
 
     ScopedLockTracer tracer("broadcastEpochProof");
-    std::lock_guard<std::timed_mutex> lock(peersMutex);
+    std::shared_lock<std::shared_mutex> lock(peersMutex);
     for (const auto& [peerID, entry] : peerTransports) {
         auto transport = entry.tx;
         if (transport && transport->isOpen()) {
@@ -3034,7 +3037,7 @@ void Network::broadcastEpochProof(int epochIdx, const std::string& rootHash,
 
 bool Network::peerSupportsAggProof(const std::string& peerId) const {
     if (!g_enableAggProof) return false;
-    std::lock_guard<std::timed_mutex> lk(peersMutex);
+    std::shared_lock<std::shared_mutex> lk(peersMutex);
     auto it = peerTransports.find(peerId);
     if (it == peerTransports.end()) return false;
     auto st = it->second.state;
