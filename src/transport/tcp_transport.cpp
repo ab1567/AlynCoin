@@ -4,6 +4,8 @@
 #include <boost/asio/streambuf.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <netinet/in.h>
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <iostream>
