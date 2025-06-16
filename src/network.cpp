@@ -26,6 +26,9 @@
 #include <unordered_set>
 #include <vector>
 #include <cctype>
+#include <shared_mutex>
+#include <resolv.h>
+#include <arpa/nameser.h>
 #include "proto_utils.h"
 #include <cstdlib>
 #include <cstdio>
@@ -47,6 +50,7 @@
 // Flag to toggle optional aggregated proof synchronization
 bool g_enableAggProof = false;
 static std::unordered_map<std::string, std::vector<Block>> incomingChains;
+static std::shared_mutex incomingChainsMtx;
 // Buffers for in-progress FULL_CHAIN syncs
 // Per-peer sync buffers are now stored in PeerState via peerTransports
 struct ScopedLockTracer {
@@ -62,6 +66,8 @@ static std::unordered_set<std::string> seenTxHashes;
 static std::mutex seenTxMutex;
 static std::unordered_set<std::string> seenBlockHashes;
 static std::mutex seenBlockMutex;
+static constexpr size_t MAX_SEEN_TX = 100000;
+static constexpr size_t MAX_SEEN_BLOCK = 100000;
 
 struct EpochProofEntry {
     std::string root;
@@ -75,7 +81,11 @@ struct InFlightData {
     std::string base64;
     bool active{false};
 };
-static thread_local std::unordered_map<std::string, InFlightData> inflight;
+// Inflight buffers keyed by peer. Previously this was thread_local which
+// caused fragments to be lost when multiple threads processed data for the
+// same peer.  Use a global map protected by a mutex instead.
+static std::unordered_map<std::string, InFlightData> inflight;
+static std::mutex inflightMutex;
 //
 // Return true if the string resembles base64 data.  The previous implementation
 // required at least one non-hex character which falsely rejected perfectly
@@ -118,6 +128,7 @@ static std::string sanitizeBase64(const std::string& in)
     return out;
 }
 static std::map<uint64_t, Block> futureBlockBuffer;
+static std::mutex futureBlockMtx;
 PubSubRouter g_pubsub;
 namespace fs = std::filesystem;
 Network* Network::instancePtr = nullptr;
@@ -150,41 +161,49 @@ static const std::vector<std::string> DEFAULT_DNS_PEERS = {
 // ==== [DNS Peer Discovery] ====
 std::vector<std::string> fetchPeersFromDNS(const std::string& domain) {
     std::vector<std::string> peers;
-    std::string cmd = "nslookup -type=TXT " + domain;
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-        std::cerr << "❌ [DNS] Failed to run nslookup for domain: " << domain << "\n";
-        return peers;
+    unsigned char answer[4096];
+    res_state state{};
+    if (res_ninit(state) != 0) {
+        std::cerr << "⚠️ [DNS] res_ninit failed\n";
+        return DEFAULT_DNS_PEERS;
     }
-    char buffer[512];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        std::string line(buffer);
-        if (line.find("text =") != std::string::npos || line.find("\"") != std::string::npos) {
-            size_t start = line.find("\"");
-            size_t end = line.find_last_of("\"");
-            if (start != std::string::npos && end > start) {
-                std::string peer = line.substr(start + 1, end - start - 1);
-                if (peer.find(":") != std::string::npos &&
-                    peer.find(" ") == std::string::npos &&
-                    peer.find(",") == std::string::npos) {
-                    std::cout << "🌐 [DNS] Found peer TXT entry: " << peer << "\n";
-                    peers.push_back(peer);
+
+    int len = res_nquery(state, domain.c_str(), ns_c_in, ns_t_txt,
+                         answer, sizeof(answer));
+    if (len < 0) {
+        std::cerr << "⚠️ [DNS] res_nquery failed for domain " << domain << "\n";
+        res_nclose(state);
+        return DEFAULT_DNS_PEERS;
+    }
+
+    ns_msg handle;
+    if (ns_initparse(answer, len, &handle) < 0) {
+        std::cerr << "⚠️ [DNS] ns_initparse failed\n";
+        res_nclose(state);
+        return DEFAULT_DNS_PEERS;
+    }
+
+    for (int i = 0; i < ns_msg_count(handle, ns_s_an); ++i) {
+        ns_rr rr;
+        if (ns_parserr(&handle, ns_s_an, i, &rr) == 0) {
+            const unsigned char* rdata = ns_rr_rdata(rr);
+            int rlen = ns_rr_rdlen(rr);
+            if (rlen > 1) {
+                std::string txt(reinterpret_cast<const char*>(rdata + 1), rlen - 1);
+                if (txt.find(":") != std::string::npos &&
+                    txt.find(' ') == std::string::npos &&
+                    txt.find(',') == std::string::npos) {
+                    peers.push_back(txt);
                 }
             }
         }
     }
-    int rc = pclose(pipe);
-    if (rc != 0) {
-        int code = WEXITSTATUS(rc);
-        std::cerr << "⚠️ [DNS] nslookup exited with code " << code
-                  << " for domain " << domain << "\n";
-    }
+
+    res_nclose(state);
+
     if (peers.empty()) {
         std::cerr << "⚠️ [DNS] No valid TXT peer records found at " << domain << "\n";
-        peers = DEFAULT_DNS_PEERS; // fallback to built-in peers
-        if (!peers.empty()) {
-            std::cerr << "ℹ️  [DNS] Using fallback peers list." << std::endl;
-        }
+        peers = DEFAULT_DNS_PEERS;
     }
     return peers;
 }
@@ -324,6 +343,8 @@ Network::~Network() {
         ioContext.stop();
         acceptor.close();
         if (listenerThread.joinable()) listenerThread.join();
+        delete peerManager;
+        peerManager = nullptr;
         std::cout << "✅ Network instance cleaned up safely." << std::endl;
     } catch (const std::exception &e) {
         std::cerr << "❌ Error during Network destruction: " << e.what() << std::endl;
@@ -343,10 +364,10 @@ Network::~Network() {
              std::cerr << "❌ [Network] Accept error: " << ec.message() << "\n";
          }
 
-         // 🔁 Recursive call to keep the acceptor alive
-         listenForConnections();
-     });
- }
+        // 🔁 Queue the next accept to avoid recursive call after destructor
+        ioContext.post([this]{ listenForConnections(); });
+    });
+}
 //
 
 void Network::start() {
@@ -783,6 +804,13 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
         }
 
         claimedPeerId = claimedIP + ":" + claimedPort;
+
+        if (claimedIP != senderIP || claimedPort != std::to_string(senderPort)) {
+            std::cerr << "⚠️  [handlePeer] Claimed endpoint " << claimedPeerId
+                      << " does not match connection " << realPeerId
+                      << ". Dropping." << std::endl;
+            return;
+        }
 
         std::cout << "🤝 Handshake from   " << realPeerId
                   << " | claimed "        << claimedPeerId
@@ -1491,9 +1519,8 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
 
     // ---- Existing protocol logic ----
 
-    static thread_local std::unordered_map<std::string, InFlightData> inflight;
-
     if (data.rfind(blockBroadcastPrefix, 0) == 0) {
+        std::lock_guard<std::mutex> lk(inflightMutex);
         InFlightData& infl = inflight[claimedPeerId];
         infl.peer   = claimedPeerId;
         infl.prefix = blockBroadcastPrefix;
@@ -1515,6 +1542,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         return;
     }
     if (data.rfind(blockBatchPrefix, 0) == 0) {
+        std::lock_guard<std::mutex> lk(inflightMutex);
         InFlightData& infl = inflight[claimedPeerId];
         infl.peer   = claimedPeerId;
         infl.prefix = blockBatchPrefix;
@@ -1534,6 +1562,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         return;
     }
     if (data.rfind(aggProofPrefix, 0) == 0) {
+        std::lock_guard<std::mutex> lk(inflightMutex);
         InFlightData& infl = inflight[claimedPeerId];
         infl.peer   = claimedPeerId;
         infl.prefix = aggProofPrefix;
@@ -1544,6 +1573,7 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         return;
     }
 
+    std::lock_guard<std::mutex> inflLk(inflightMutex);
     auto inflIt = inflight.find(claimedPeerId);
     if (inflIt != inflight.end() && looksLikeBase64(data)) {
         inflIt->second.base64 += data;
@@ -1763,6 +1793,8 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                     std::lock_guard<std::mutex> lk(seenTxMutex);
                     if (seenTxHashes.count(hash)) return;
                     seenTxHashes.insert(hash);
+                    if (seenTxHashes.size() > MAX_SEEN_TX)
+                        seenTxHashes.clear();
                 }
 
                 if (tx.isValid(tx.getSenderPublicKeyDilithium(),
@@ -1868,6 +1900,8 @@ void Network::broadcastBlock(const Block& block, bool /*force*/)
         if (seenBlockHashes.count(block.getHash()))
             return;
         seenBlockHashes.insert(block.getHash());
+        if (seenBlockHashes.size() > MAX_SEEN_BLOCK)
+            seenBlockHashes.clear();
     }
     // Serialize to protobuf and then base64
     alyncoin::BlockProto proto = block.toProtobuf();
@@ -1916,6 +1950,8 @@ void Network::broadcastBlocks(const std::vector<Block>& blocks)
     for (const auto& b : blocks) {
         std::lock_guard<std::mutex> lk(seenBlockMutex);
         seenBlockHashes.insert(b.getHash());
+        if (seenBlockHashes.size() > MAX_SEEN_BLOCK)
+            seenBlockHashes.clear();
     }
     alyncoin::BlockchainProto proto;
     for (const auto& b : blocks)
@@ -1938,6 +1974,8 @@ void Network::sendBlockToPeer(const std::string& peer, const Block& blk)
         if (seenBlockHashes.count(blk.getHash()))
             return;
         seenBlockHashes.insert(blk.getHash());
+        if (seenBlockHashes.size() > MAX_SEEN_BLOCK)
+            seenBlockHashes.clear();
     }
     alyncoin::BlockProto proto = blk.toProtobuf();
     std::string raw;
@@ -1974,6 +2012,7 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
     auto processBlock = [&](const Block& blk, const std::string& fromPeer)
     {
         Blockchain& chain = Blockchain::getInstance();
+        std::unique_lock<std::shared_mutex> bufLock(incomingChainsMtx);
         auto& buf = incomingChains[fromPeer];
 
         {
@@ -1984,6 +2023,8 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
                 return;
             }
             seenBlockHashes.insert(blk.getHash());
+            if (seenBlockHashes.size() > MAX_SEEN_BLOCK)
+                seenBlockHashes.clear();
         }
 
         // Prevent double-buffer of same block
@@ -2188,6 +2229,8 @@ void Network::receiveTransaction(const Transaction &tx) {
         if (seenTxHashes.count(txHash) > 0)
             return;
         seenTxHashes.insert(txHash);
+        if (seenTxHashes.size() > MAX_SEEN_TX)
+            seenTxHashes.clear();
     }
 
     Blockchain::getInstance().addTransaction(tx);
@@ -2216,7 +2259,31 @@ void Network::handleNewBlock(const Block &newBlock) {
     Blockchain &blockchain = Blockchain::getInstance();
     const int expectedIndex = blockchain.getLatestBlock().getIndex() + 1;
 
-    // 1) PoW and zk-STARK check
+    // 1) Signature validation (cheap checks first)
+    try {
+        auto msgBytes = newBlock.getSignatureMessage();
+        auto sigDil = newBlock.getDilithiumSignature();
+        auto pubDil = newBlock.getPublicKeyDilithium();
+
+        if (!Crypto::verifyWithDilithium(msgBytes, sigDil, pubDil)) {
+            std::cerr << "❌ Dilithium signature verification failed!\n";
+            return;
+        }
+
+        auto sigFal = newBlock.getFalconSignature();
+        auto pubFal = newBlock.getPublicKeyFalcon();
+
+        if (!Crypto::verifyWithFalcon(msgBytes, sigFal, pubFal)) {
+            std::cerr << "❌ Falcon signature verification failed!\n";
+            return;
+        }
+
+    } catch (const std::exception& e) {
+        std::cerr << "❌ [Exception] Signature verification error: " << e.what() << "\n";
+        return;
+    }
+
+    // 2) Proof of work and zk-STARK
     if (!newBlock.hasValidProofOfWork()) {
         std::cerr << "❌ [ERROR] Block PoW check failed!\n";
         return;
@@ -2238,7 +2305,7 @@ void Network::handleNewBlock(const Block &newBlock) {
         return;
     }
 
-    // 2) Fork detection
+    // 3) Fork detection
     if (!blockchain.getChain().empty()) {
         std::string localTipHash = blockchain.getLatestBlockHash();
         if (newBlock.getPreviousHash() != localTipHash) {
@@ -2267,7 +2334,10 @@ void Network::handleNewBlock(const Block &newBlock) {
     }
     if (newBlock.getIndex() > expectedIndex) {
         std::cerr << "⚠️ [Node] Received future block. Buffering (idx=" << newBlock.getIndex() << ").\n";
-        futureBlockBuffer[newBlock.getIndex()] = newBlock;
+        {
+            std::lock_guard<std::mutex> lk(futureBlockMtx);
+            futureBlockBuffer[newBlock.getIndex()] = newBlock;
+        }
 
         if (newBlock.getIndex() > expectedIndex + 5) {
             for (const auto& peer : peerTransports) {
@@ -2277,31 +2347,7 @@ void Network::handleNewBlock(const Block &newBlock) {
         return;
     }
 
-    // 4) Signature validation
-    try {
-        auto msgBytes = newBlock.getSignatureMessage();
-        auto sigDil = newBlock.getDilithiumSignature();
-        auto pubDil = newBlock.getPublicKeyDilithium();
-
-        if (!Crypto::verifyWithDilithium(msgBytes, sigDil, pubDil)) {
-            std::cerr << "❌ Dilithium signature verification failed!\n";
-            return;
-        }
-
-        auto sigFal = newBlock.getFalconSignature();
-        auto pubFal = newBlock.getPublicKeyFalcon();
-
-        if (!Crypto::verifyWithFalcon(msgBytes, sigFal, pubFal)) {
-            std::cerr << "❌ Falcon signature verification failed!\n";
-            return;
-        }
-
-    } catch (const std::exception& e) {
-        std::cerr << "❌ [Exception] Signature verification error: " << e.what() << "\n";
-        return;
-    }
-
-    // 5) Add and save
+    // 4) Add and save
     try {
         if (!blockchain.addBlock(newBlock)) {
             std::cerr << "❌ [ERROR] Failed to add new block.\n";
@@ -2317,9 +2363,15 @@ void Network::handleNewBlock(const Block &newBlock) {
 
     // 6) Process any buffered future blocks
     uint64_t nextIndex = blockchain.getLatestBlock().getIndex() + 1;
-    while (futureBlockBuffer.count(nextIndex)) {
-        auto nextBlk = futureBlockBuffer[nextIndex];
-        futureBlockBuffer.erase(nextIndex);
+    while (true) {
+        Block nextBlk;
+        {
+            std::lock_guard<std::mutex> lk(futureBlockMtx);
+            auto it = futureBlockBuffer.find(nextIndex);
+            if (it == futureBlockBuffer.end()) break;
+            nextBlk = it->second;
+            futureBlockBuffer.erase(it);
+        }
         std::cout << "⏩ Processing buffered block: " << nextIndex << "\n";
         handleNewBlock(nextBlk);
         ++nextIndex;
@@ -2982,6 +3034,7 @@ void Network::broadcastEpochProof(int epochIdx, const std::string& rootHash,
 
 bool Network::peerSupportsAggProof(const std::string& peerId) const {
     if (!g_enableAggProof) return false;
+    std::lock_guard<std::timed_mutex> lk(peersMutex);
     auto it = peerTransports.find(peerId);
     if (it == peerTransports.end()) return false;
     auto st = it->second.state;
