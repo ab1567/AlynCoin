@@ -44,6 +44,8 @@
 #include "transport/pubsub_router.h"
 
 // ==== [Globals, Statics] ====
+// Flag to toggle optional aggregated proof synchronization
+bool g_enableAggProof = false;
 static std::unordered_map<std::string, std::vector<Block>> incomingChains;
 // Buffers for in-progress FULL_CHAIN syncs
 // Per-peer sync buffers are now stored in PeerState via peerTransports
@@ -872,7 +874,8 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
         hs["capabilities"] = Json::arrayValue;
         hs["capabilities"].append("full");
         hs["capabilities"].append("miner");
-        hs["capabilities"].append("agg_proof_v1");
+        if (g_enableAggProof)
+            hs["capabilities"].append("agg_proof_v1");
         hs["height"]      = Blockchain::getInstance().getHeight();
 
         Json::StreamWriterBuilder wr;  wr["indentation"] = "";
@@ -898,12 +901,12 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
               << ", peer " << claimedPeerId
               << " height=" << remoteHeight << "\n";
     if (remoteHeight > static_cast<int>(myHeight) && transport && transport->isOpen()) {
-        if (remoteAgg)
+        if (g_enableAggProof && remoteAgg)
             requestEpochHeaders(claimedPeerId);
         else
             sendData(transport, "ALYN|REQUEST_BLOCKCHAIN\n");
     } else if (remoteHeight < static_cast<int>(myHeight) && transport && transport->isOpen()) {
-        if (!remoteAgg)
+        if (!g_enableAggProof || !remoteAgg)
             sendFullChain(transport);
     }
 
@@ -2551,7 +2554,8 @@ bool Network::connectToNode(const std::string &host, int port)
     handshake["capabilities"]= Json::arrayValue;
     handshake["capabilities"].append("full");
     handshake["capabilities"].append("miner");
-    handshake["capabilities"].append("agg_proof_v1");
+    if (g_enableAggProof)
+        handshake["capabilities"].append("agg_proof_v1");
     handshake["height"]      = Blockchain::getInstance().getHeight();
 
         Json::StreamWriterBuilder wr;  wr["indentation"] = "";
@@ -2961,6 +2965,8 @@ void Network::broadcastRollupBlock(const RollupBlock& rollup) {
 
 void Network::broadcastEpochProof(int epochIdx, const std::string& rootHash,
                                   const std::vector<uint8_t>& proofBytes) {
+    if (!g_enableAggProof)
+        return;
     std::string b64 = Crypto::base64Encode(std::string(proofBytes.begin(), proofBytes.end()));
     std::string payload = "AGG_PROOF|" + std::to_string(epochIdx) + "|" + rootHash + "|" + b64;
 
@@ -2975,6 +2981,7 @@ void Network::broadcastEpochProof(int epochIdx, const std::string& rootHash,
 }
 
 bool Network::peerSupportsAggProof(const std::string& peerId) const {
+    if (!g_enableAggProof) return false;
     auto it = peerTransports.find(peerId);
     if (it == peerTransports.end()) return false;
     auto st = it->second.state;

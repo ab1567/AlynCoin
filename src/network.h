@@ -23,6 +23,9 @@
 
 using boost::asio::ip::tcp;
 
+// Global flag controlling optional aggregated proof synchronization.
+extern bool g_enableAggProof;
+
 class Network {
 public:
     // Singleton initialization
