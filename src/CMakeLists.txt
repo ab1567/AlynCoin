@@ -340,6 +340,7 @@ target_link_libraries(alyncoin_lib
     crypto
     m
     dl
+    resolv
     ${ROCKSDB_LIB}
     ${Protobuf_LIBRARIES}
     falcon

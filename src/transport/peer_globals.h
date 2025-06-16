@@ -2,6 +2,7 @@
 #include <unordered_map>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 #include "block.h"
@@ -26,5 +27,5 @@ struct PeerEntry {
 
 // Canonical global peer table and mutex for the entire app:
 extern std::unordered_map<std::string, PeerEntry> peerTransports;
-extern std::timed_mutex peersMutex;
+extern std::shared_mutex peersMutex;
 

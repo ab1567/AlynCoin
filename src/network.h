@@ -143,6 +143,7 @@ private:
     boost::asio::ip::tcp::acceptor acceptor;
     std::thread listenerThread;
     std::thread serverThread;
+    std::thread autoMinerThread;
     PeerManager *peerManager = nullptr;
     std::string publicPeerId;
     std::unordered_set<std::string> bannedPeers;
