@@ -1248,15 +1248,21 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         // Determine expected closing character
         char endChar = (buf.front() == '[') ? ']' : '}';
 
-        // Wait until we have a closing brace/bracket
-        if (buf.back() != endChar) {
+        // Look for the closing brace/bracket
+        auto endPos = buf.find_last_of(endChar);
+        if (endPos == std::string::npos) {
             if (buf.size() > 65536) buf.clear();
             return;
         }
 
-        // Complete JSON fragment ready
-        data.swap(buf);
+        // Extract JSON fragment and preserve any trailing characters
+        std::string remainder = buf.substr(endPos + 1);
+        data = buf.substr(0, endPos + 1);
         buf.clear();
+
+        // Process trailing bytes (may contain the next message)
+        if (!remainder.empty())
+            handleIncomingData(claimedPeerId, remainder, transport);
     }
 
     // === FULL_CHAIN inflight buffer for peer sync ===
