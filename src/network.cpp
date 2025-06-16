@@ -162,24 +162,24 @@ static const std::vector<std::string> DEFAULT_DNS_PEERS = {
 std::vector<std::string> fetchPeersFromDNS(const std::string& domain) {
     std::vector<std::string> peers;
     unsigned char answer[4096];
-    res_state state{};
-    if (res_ninit(state) != 0) {
+    struct __res_state state{};
+    if (res_ninit(&state) != 0) {
         std::cerr << "⚠️ [DNS] res_ninit failed\n";
         return DEFAULT_DNS_PEERS;
     }
 
-    int len = res_nquery(state, domain.c_str(), ns_c_in, ns_t_txt,
+    int len = res_nquery(&state, domain.c_str(), ns_c_in, ns_t_txt,
                          answer, sizeof(answer));
     if (len < 0) {
         std::cerr << "⚠️ [DNS] res_nquery failed for domain " << domain << "\n";
-        res_nclose(state);
+        res_nclose(&state);
         return DEFAULT_DNS_PEERS;
     }
 
     ns_msg handle;
     if (ns_initparse(answer, len, &handle) < 0) {
         std::cerr << "⚠️ [DNS] ns_initparse failed\n";
-        res_nclose(state);
+        res_nclose(&state);
         return DEFAULT_DNS_PEERS;
     }
 
@@ -199,7 +199,7 @@ std::vector<std::string> fetchPeersFromDNS(const std::string& domain) {
         }
     }
 
-    res_nclose(state);
+    res_nclose(&state);
 
     if (peers.empty()) {
         std::cerr << "⚠️ [DNS] No valid TXT peer records found at " << domain << "\n";
