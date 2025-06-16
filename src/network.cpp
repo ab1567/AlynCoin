@@ -1206,20 +1206,15 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         }
     }
 
-    if (data.rfind(protocolPrefix, 0) == 0)
+    if (data.rfind(protocolPrefix, 0) == 0) {
         data = data.substr(prefLen);
-    else {
-        size_t pos = data.find(protocolPrefix);
-        if (pos != std::string::npos) {
-            data = data.substr(pos + prefLen);
-        } else {
-            for (size_t i = 1; i < prefLen && i <= data.size(); ++i) {
-                if (data.compare(data.size() - i, i, protocolPrefix, 0, i) == 0) {
-                    std::lock_guard<std::mutex> lk(ps->m);
-                    ps->prefixBuf = data.substr(data.size() - i);
-                    data.erase(data.size() - i);
-                    break;
-                }
+    } else {
+        for (size_t i = 1; i < prefLen && i <= data.size(); ++i) {
+            if (data.compare(data.size() - i, i, protocolPrefix, 0, i) == 0) {
+                std::lock_guard<std::mutex> lk(ps->m);
+                ps->prefixBuf = data.substr(data.size() - i);
+                data.erase(data.size() - i);
+                break;
             }
         }
     }
