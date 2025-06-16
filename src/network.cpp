@@ -110,9 +110,9 @@ static std::string sanitizeBase64(const std::string& in)
         if (std::isalnum(c) || c == '+' || c == '/' || c == '=')
             out.push_back(c);
     }
-    // Trim padding noise at the end
+    // Ensure length is a multiple of 4 by padding '=' characters
     while (out.size() % 4)
-        out.pop_back();
+        out.push_back('=');
     return out;
 }
 static std::map<uint64_t, Block> futureBlockBuffer;
