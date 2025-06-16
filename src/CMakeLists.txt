@@ -471,24 +471,28 @@ target_link_libraries(blacklist_test
 
 # --------------------------
 # Blockchain Explorer Executable
-add_executable(explorer_server ${EXPLORER_SOURCES})
-
-add_dependencies(explorer_server winterfell_ffi)
-target_include_directories(explorer_server PRIVATE ${SOURCE_DIR}/explorer ${CMAKE_SOURCE_DIR}/Crow/include)
-
-target_link_libraries(explorer_server
-    alyncoin_lib
-    ${JSONCPP_LIBRARIES}
-    ${ROCKSDB_LIB}
-    pthread
-    ${Protobuf_LIBRARIES}
-    m
-    dl
-)
+if(EXISTS ${CMAKE_SOURCE_DIR}/Crow/include/crow.h)
+    add_executable(explorer_server ${EXPLORER_SOURCES})
+    add_dependencies(explorer_server winterfell_ffi)
+    target_include_directories(explorer_server PRIVATE ${SOURCE_DIR}/explorer ${CMAKE_SOURCE_DIR}/Crow/include)
+    target_link_libraries(explorer_server
+        alyncoin_lib
+        ${JSONCPP_LIBRARIES}
+        ${ROCKSDB_LIB}
+        pthread
+        ${Protobuf_LIBRARIES}
+        m
+        dl
+    )
+    set(EXPLORER_TARGET explorer_server)
+else()
+    message(WARNING "Crow not found; explorer_server disabled")
+    set(EXPLORER_TARGET )
+endif()
 
 # --------------------------
 # Output Binaries Location
-set_target_properties(alyncoin alyncoin-cli explorer_server peer_blacklist_cli blacklist_test swapcli identitycli PROPERTIES
+set_target_properties(alyncoin alyncoin-cli ${EXPLORER_TARGET} peer_blacklist_cli blacklist_test swapcli identitycli PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 

@@ -618,6 +618,9 @@ int main(int argc, char *argv[]) {
         } else if (arg == "--keypath" && i + 1 < argc) {
             keyDir = argv[++i];
             if (keyDir.back() != '/') keyDir += '/';
+        } else if (arg == "--enable-agg-proof") {
+            g_enableAggProof = true;
+            std::cout << "🔧 Aggregated proof sync ENABLED" << std::endl;
         }
     }
     if (!portSpecified) {
