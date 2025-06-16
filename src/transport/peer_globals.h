@@ -15,6 +15,7 @@ struct PeerState {
     std::string prefixBuf;      // holds partial protocol prefix across chunks
     std::vector<Block> orphanBuf;
     bool        fullChainActive{false};
+    bool        supportsAggProof{false};
     std::mutex  m;
 };
 
