@@ -808,11 +808,16 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
 
         claimedPeerId = claimedIP + ":" + claimedPort;
 
-        if (claimedIP != senderIP || claimedPort != std::to_string(senderPort)) {
-            std::cerr << "⚠️  [handlePeer] Claimed endpoint " << claimedPeerId
-                      << " does not match connection " << realPeerId
+        if (claimedIP != senderIP) {
+            std::cerr << "⚠️  [handlePeer] Claimed IP " << claimedIP
+                      << " does not match connection IP " << senderIP
                       << ". Dropping." << std::endl;
             return;
+        }
+        if (claimedPort != std::to_string(senderPort)) {
+            std::cerr << "ℹ️  [handlePeer] Claimed port " << claimedPort
+                      << " differs from connection port " << senderPort
+                      << " (continuing)." << std::endl;
         }
 
         std::cout << "🤝 Handshake from   " << realPeerId
