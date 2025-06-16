@@ -14,6 +14,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -144,7 +145,7 @@ private:
     std::thread listenerThread;
     std::thread serverThread;
     std::thread autoMinerThread;
-    PeerManager *peerManager = nullptr;
+    std::unique_ptr<PeerManager> peerManager;
     std::string publicPeerId;
     std::unordered_set<std::string> bannedPeers;
     PeerBlacklist *blacklist;

@@ -53,21 +53,29 @@ static std::unordered_map<std::string, std::vector<Block>> incomingChains;
 static std::shared_mutex incomingChainsMtx;
 // Buffers for in-progress FULL_CHAIN syncs
 // Per-peer sync buffers are now stored in PeerState via peerTransports
+#ifdef DEBUG_TRACE_LOCKS
 struct ScopedLockTracer {
     std::string name;
-    ScopedLockTracer(const std::string &n) : name(n) {
+    explicit ScopedLockTracer(const std::string &n) : name(n) {
         std::cerr << "[TRACE] Lock entered: " << name << std::endl;
     }
     ~ScopedLockTracer() {
         std::cerr << "[TRACE] Lock exited: " << name << std::endl;
     }
 };
+#else
+struct ScopedLockTracer {
+    explicit ScopedLockTracer(const std::string &) {}
+    ~ScopedLockTracer() {}
+};
+#endif
 static std::unordered_set<std::string> seenTxHashes;
 static std::mutex seenTxMutex;
 static std::unordered_set<std::string> seenBlockHashes;
 static std::mutex seenBlockMutex;
 static constexpr size_t MAX_SEEN_TX = 100000;
 static constexpr size_t MAX_SEEN_BLOCK = 100000;
+static constexpr size_t MAX_PEERS = 128;
 
 struct EpochProofEntry {
     std::string root;
@@ -327,7 +335,7 @@ Network::Network(unsigned short port, Blockchain* blockchain, PeerBlacklist* bla
 
         std::cout << "🌐 Network listener started on port: " << port << "\n";
 
-        peerManager = new PeerManager(blacklistPtr, this);
+        peerManager = std::make_unique<PeerManager>(blacklistPtr, this);
         isRunning = true;
         listenerThread = std::thread(&Network::listenForConnections, this);
 
@@ -346,8 +354,7 @@ Network::~Network() {
         if (listenerThread.joinable()) listenerThread.join();
         if (serverThread.joinable()) serverThread.join();
         if (autoMinerThread.joinable()) autoMinerThread.join();
-        delete peerManager;
-        peerManager = nullptr;
+        peerManager.reset();
         std::cout << "✅ Network instance cleaned up safely." << std::endl;
     } catch (const std::exception &e) {
         std::cerr << "❌ Error during Network destruction: " << e.what() << std::endl;
@@ -622,7 +629,7 @@ void Network::broadcastPeerList() {
 
 //
 PeerManager* Network::getPeerManager() {
-    return peerManager;
+    return peerManager.get();
 }
 
 // ✅ **Request peer list from connected nodes**
@@ -1929,10 +1936,12 @@ void Network::broadcastBlock(const Block& block, bool /*force*/)
         ScopedLockTracer _t("broadcastBlock");
         std::unique_lock<std::shared_mutex> lk(peersMutex, std::try_to_lock);
         if (!lk.owns_lock()) {
-            std::cerr << "⚠️ [broadcastBlock] peersMutex lock timeout\n";
-            return;
+            // fall back to a shared lock rather than dropping the broadcast
+            std::shared_lock<std::shared_mutex> rlk(peersMutex);
+            peersCopy = peerTransports;
+        } else {
+            peersCopy = peerTransports;
         }
-        peersCopy = peerTransports;
     }
 
     std::set<std::shared_ptr<Transport>> seen;
@@ -2573,9 +2582,9 @@ void Network::startReadLoop(const std::string&           peerId,
 // Connect to Node
 bool Network::connectToNode(const std::string &host, int port)
 {
-    if (peerTransports.size() > 32) {
-        std::cerr << "⚠️ [connectToNode] Max-peer cap reached.  Skipping "
-                  << host << ':' << port << '\n';
+    if (peerTransports.size() > MAX_PEERS) {
+        std::cerr << "⚠️ [connectToNode] Max-peer cap reached (" << MAX_PEERS
+                  << "). Skipping " << host << ':' << port << '\n';
         return false;
     }
     std::string peerKey = host + ':' + std::to_string(port);
@@ -2583,6 +2592,14 @@ bool Network::connectToNode(const std::string &host, int port)
         std::cerr << "⚠️ [connectToNode] Peer " << peerKey << " is banned. Skipping connect.\n";
         return false;
     }
+    {
+        std::shared_lock<std::shared_mutex> g(peersMutex);
+        if (peerTransports.count(peerKey)) {
+            std::cout << "🔁 Already connected to peer: " << peerKey << '\n';
+            return false;
+        }
+    }
+
     try {
         std::cout << "[PEER_CONNECT] Attempting to connect to "
                   << host << ':' << port << '\n';
@@ -2814,7 +2831,7 @@ if (base64Block.empty()) {
     std::cerr << "[BUG] EMPTY BASE64 in sendLatestBlock for hash=" << latestBlock.getHash() << "\n";
     return; // <--- DON'T send if empty!
 }
-    sendData(peerIP, "ALYN|BLOCK_BROADCAST|" + base64Block + '\n');
+    sendData(peerIP, "ALYN|BLOCK_BROADCAST|" + base64Block);
 
     std::cout << "📡 [LIVE BROADCAST] Latest block sent to " << peerIP << " (Dilithium + Falcon signatures included)\n";
 }
