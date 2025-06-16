@@ -1301,6 +1301,19 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         }
     }
     if (ps->fullChainActive) {
+        /* ------------------------------------------------------------
+         * 1.  normal control messages are allowed during a bulk sync
+         * ------------------------------------------------------------ */
+        if (data.rfind("ALYN|", 0) == 0) {
+            handleIncomingData(claimedPeerId,
+                               data.substr(5),
+                               transport);
+            return;
+        }
+
+        /* ------------------------------------------------------------
+         * 2.  BLOCKCHAIN_END terminator
+         * ------------------------------------------------------------ */
         if (data == "BLOCKCHAIN_END") {
             // we **try** to decode – but only give up when it succeeds
             std::string b64;
@@ -1352,19 +1365,23 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             return;
         }
 
-        if (data.find('|') == std::string::npos && looksLikeBase64(data)) {
+        /* ------------------------------------------------------------
+         * 3.  Additional FULL_CHAIN|… chunks keep arriving
+         * ------------------------------------------------------------ */
+        if (data.rfind("FULL_CHAIN|", 0) == 0) {
             std::lock_guard<std::mutex> lk(ps->m);
-            ps->fullChainB64 += data;
-            if (ps->fullChainB64.size() > MAX_INFLIGHT_CHAIN_BYTES) {
-                std::cerr << "[handleIncomingData] ⚠️ FULL_CHAIN buffer exceeded limit from "
-                          << claimedPeerId << " (" << ps->fullChainB64.size() << " bytes)\n";
-                ps->fullChainB64.clear();
-                ps->fullChainActive = false;
-            }
+            ps->fullChainB64 += data.substr(sizeof("FULL_CHAIN|")-1);
             return;
         }
 
-        if (data == "PING") {
+        /* treat raw, delimiter-less base64 as before */
+        if (data.find('|') == std::string::npos && looksLikeBase64(data)) {
+            std::lock_guard<std::mutex> lk(ps->m);
+            ps->fullChainB64 += data;
+            return;
+        }
+
+        if (data == "PING") {                     // keep-alive
             if (transport && transport->isOpen())
                 transport->queueWrite("ALYN|PONG\n");
             return;
@@ -1372,15 +1389,8 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
         if (data == "PONG")
             return;
 
-        if (!data.empty() && data.front() == '{') {
-            // Defer to JSON handler below without clearing buffer
-        } else {
-            // Unexpected data while syncing. Preserve buffer so the FULL_CHAIN
-            // transfer can complete instead of aborting prematurely.
-            std::cerr << "[handleIncomingData] ⚠️ Unexpected data while syncing FULL_CHAIN from "
-                      << claimedPeerId << ". Buffer preserved.\n";
-            return;
-        }
+        /* Anything else: just fall through – the JSON logic after this
+         * block will handle it normally.  No warning spam. */
     }
 
     // --- Legacy multi-line FULL_CHAIN handler ---
