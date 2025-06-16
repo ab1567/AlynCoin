@@ -513,7 +513,8 @@ void Network::syncWithPeers() {
             std::cout << "📡 [DEBUG] Requesting blockchain sync from " << peer << "...\n";
             requestBlockchainSync(peer);
         } else if (static_cast<size_t>(peerHeight) < myHeight && transport && transport->isOpen()) {
-            sendFullChain(transport);
+            if (!peerSupportsAggProof(peer))
+                sendFullChain(transport);
         }
     }
 }
@@ -715,6 +716,7 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
     std::string realPeerId, claimedPeerId, handshakeLine;
     std::string claimedPort, claimedVersion, claimedNetwork, claimedIP;
     int remoteHeight = 0;  // <-- Declare here so it's in scope
+    bool remoteAgg = false;
 
     // Helper: what _we_ look like to the network
     const auto selfAddr = [this]() -> std::string {
@@ -762,6 +764,14 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
         claimedNetwork = root.get("network_id", "").asString();
         claimedIP      = root.get("ip", senderIP).asString();
         remoteHeight   = root.get("height", 0).asInt();
+        if (root.isMember("capabilities")) {
+            for (const auto& c : root["capabilities"]) {
+                if (c.asString() == "agg_proof_v1") {
+                    remoteAgg = true;
+                    break;
+                }
+            }
+        }
         // (1) normalize the port so it’s ALWAYS decimal
         try {
             const auto portDec = std::stoi(claimedPort, nullptr, 0);
@@ -784,6 +794,8 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
             return;
         }
 
+
+        
     } catch (const std::exception& ex) {
         // fallback: treat as unknown peer
         try {
@@ -825,9 +837,12 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
         auto it = peerTransports.find(claimedPeerId);
         if (it != peerTransports.end()) {
             it->second.tx = transport; // refresh
+            if (it->second.state) it->second.state->supportsAggProof = remoteAgg;
         } else {
+            auto state = std::make_shared<PeerState>();
+            state->supportsAggProof = remoteAgg;
             peerTransports.emplace(claimedPeerId,
-                                   PeerEntry{transport, std::make_shared<PeerState>()});
+                                   PeerEntry{transport, state});
             if (peerManager) peerManager->connectToPeer(claimedPeerId);
         }
 
@@ -883,9 +898,13 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
               << ", peer " << claimedPeerId
               << " height=" << remoteHeight << "\n";
     if (remoteHeight > static_cast<int>(myHeight) && transport && transport->isOpen()) {
-        sendData(transport, "ALYN|REQUEST_BLOCKCHAIN");
+        if (remoteAgg)
+            requestEpochHeaders(claimedPeerId);
+        else
+            sendData(transport, "ALYN|REQUEST_BLOCKCHAIN\n");
     } else if (remoteHeight < static_cast<int>(myHeight) && transport && transport->isOpen()) {
-        sendFullChain(transport);
+        if (!remoteAgg)
+            sendFullChain(transport);
     }
 
     this->autoSyncIfBehind();
@@ -991,11 +1010,18 @@ void Network::autoSyncIfBehind() {
             std::string peerTip = peerManager->getPeerTipHash(peerAddr);
 
             if (ph > static_cast<int>(myHeight)) {
-                peerTransport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+                if (peerSupportsAggProof(peerAddr))
+                    requestEpochHeaders(peerAddr);
+                else
+                    peerTransport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
             } else if (ph == static_cast<int>(myHeight) && !peerTip.empty() && peerTip != myTip) {
-                peerTransport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+                if (peerSupportsAggProof(peerAddr))
+                    requestEpochHeaders(peerAddr);
+                else
+                    peerTransport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
             } else if (ph < static_cast<int>(myHeight)) {
-                sendFullChain(peerTransport);
+                if (!peerSupportsAggProof(peerAddr))
+                    sendFullChain(peerTransport);
             }
         }
     }
@@ -1329,8 +1355,12 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 alyncoin::BlockchainProto protoChain;
                 if (!protoChain.ParseFromString(raw)) {
                     std::cerr << "[handleIncomingData] ⚠️  FULL_CHAIN parse failed. Requesting re-sync...\n";
-                    if (transport && transport->isOpen())
-                        transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+                    if (transport && transport->isOpen()) {
+                        if (peerSupportsAggProof(claimedPeerId))
+                            requestEpochHeaders(claimedPeerId);
+                        else
+                            transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+                    }
                     {
                         std::lock_guard<std::mutex> lk(ps->m);
                         ps->fullChainB64.clear();
@@ -1570,17 +1600,25 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             peerHeight = peerManager->getPeerHeight(claimedPeerId);
         }
         if (peerHeight > static_cast<int>(myHeight) && transport && transport->isOpen()) {
-            transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+            if (peerSupportsAggProof(claimedPeerId))
+                requestEpochHeaders(claimedPeerId);
+            else
+                transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
         } else if (peerHeight < static_cast<int>(myHeight) && transport && transport->isOpen()) {
-            sendFullChain(transport);
+            if (!peerSupportsAggProof(claimedPeerId))
+                sendFullChain(transport);
         }
         return;
     }
 
     // === Blockchain Request ===
     if (data == "REQUEST_BLOCKCHAIN") {
-        if (transport && transport->isOpen())
-            sendFullChain(transport);
+        if (transport && transport->isOpen()) {
+            if (!peerSupportsAggProof(claimedPeerId))
+                sendFullChain(transport);
+            else
+                requestEpochHeaders(claimedPeerId);
+        }
         return;
     }
 
@@ -1606,18 +1644,27 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 int h = root.get("height", 0).asInt();
                 peerManager->setPeerHeight(claimedPeerId, h);
 
-                if (h > (int)chain.getHeight() && transport && transport->isOpen())
-                    transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
-                else if (h < (int)chain.getHeight() && transport && transport->isOpen())
-                    sendFullChain(transport);
+                if (h > (int)chain.getHeight() && transport && transport->isOpen()) {
+                    if (peerSupportsAggProof(claimedPeerId))
+                        requestEpochHeaders(claimedPeerId);
+                    else
+                        transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+                } else if (h < (int)chain.getHeight() && transport && transport->isOpen()) {
+                    if (!peerSupportsAggProof(claimedPeerId))
+                        sendFullChain(transport);
+                }
                 return;
             }
 
             if (type == "height_response") {
                 int h = root["data"].asInt();
                 if (peerManager) peerManager->setPeerHeight(claimedPeerId, h);
-                if (h > (int)chain.getHeight() && transport && transport->isOpen())
-                    transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+                if (h > (int)chain.getHeight() && transport && transport->isOpen()) {
+                    if (peerSupportsAggProof(claimedPeerId))
+                        requestEpochHeaders(claimedPeerId);
+                    else
+                        transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+                }
                 return;
             }
 
@@ -1629,7 +1676,10 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
                 if (ph == static_cast<int>(chain.getHeight()) &&
                     !tip.empty() && tip != chain.getLatestBlockHash() &&
                     transport && transport->isOpen()) {
-                    transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+                    if (peerSupportsAggProof(claimedPeerId))
+                        requestEpochHeaders(claimedPeerId);
+                    else
+                        transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
                 }
                 return;
             }
@@ -2410,7 +2460,10 @@ void Network::sendInitialRequests(const std::string& peerId)
 
     j["type"] = "request_peers";
     sendData(peerId, "ALYN|" + Json::writeString(b, j) + "\n");
-    sendData(peerId, "ALYN|REQUEST_BLOCKCHAIN\n");
+    if (peerSupportsAggProof(peerId))
+        requestEpochHeaders(peerId);
+    else
+        sendData(peerId, "ALYN|REQUEST_BLOCKCHAIN\n");
 
     sendInventory(peerId);
 }
@@ -2518,13 +2571,26 @@ bool Network::connectToNode(const std::string &host, int port)
             Json::CharReaderBuilder rb; std::string errs;
             std::istringstream iss(remoteHs);
             if (Json::parseFromStream(rb, iss, &rh, &errs) &&
-                rh["type"].asString()=="handshake" && peerManager)
+                rh["type"].asString()=="handshake")
             {
                 int h = rh.get("height",0).asInt();
-                peerManager->setPeerHeight(peerKey, h);
+                bool agg = false;
+                if (rh.isMember("capabilities")) {
+                    for (const auto& c : rh["capabilities"]) {
+                        if (c.asString()=="agg_proof_v1") { agg = true; break; }
+                    }
+                }
+                {
+                    ScopedLockTracer _t("connectToNode/remoteHs");
+                    std::lock_guard<std::timed_mutex> lk(peersMutex);
+                    auto it = peerTransports.find(peerKey);
+                    if (it != peerTransports.end() && it->second.state)
+                        it->second.state->supportsAggProof = agg;
+                }
+                if (peerManager) peerManager->setPeerHeight(peerKey, h);
                 if (h > (int)Blockchain::getInstance().getHeight())
                     transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
-                else if (h < (int)Blockchain::getInstance().getHeight())
+                else if (h < (int)Blockchain::getInstance().getHeight() && !agg)
                     sendFullChain(transport);
             }
         }
@@ -2906,4 +2972,11 @@ void Network::broadcastEpochProof(int epochIdx, const std::string& rootHash,
             transport->queueWrite(std::string("ALYN|") + payload + "\n");
         }
     }
+}
+
+bool Network::peerSupportsAggProof(const std::string& peerId) const {
+    auto it = peerTransports.find(peerId);
+    if (it == peerTransports.end()) return false;
+    auto st = it->second.state;
+    return st ? st->supportsAggProof : false;
 }
