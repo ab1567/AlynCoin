@@ -835,17 +835,6 @@ Block Blockchain::minePendingTransactions(
         return Block();
     }
 
-    // If this block completes an epoch (or we're still within the first epoch),
-    // compute the aggregated root so epochs are available from genesis.
-    size_t nextIndex = chain.size();
-    if ((nextIndex + 1) % EPOCH_SIZE == 0 || nextIndex < static_cast<size_t>(EPOCH_SIZE)) {
-        std::string root = computeEpochRoot(nextIndex);
-        if (!root.empty()) {
-            newBlock.setEpochRoot(root);
-            std::string dummy = WinterfellStark::generateProof(root, root, root);
-            newBlock.setEpochProof(std::vector<uint8_t>(dummy.begin(), dummy.end()));
-        }
-    }
 
     if (newBlock.getZkProof().empty()) {
         std::cerr << "❌ [ERROR] Mined block has empty zkProof! Aborting mining.\n";
@@ -856,6 +845,19 @@ Block Blockchain::minePendingTransactions(
     if (!addBlock(newBlock)) {
         std::cerr << "❌ Error adding mined block to blockchain.\n";
         return Block();
+    }
+
+    // Now that the block is stored, compute and attach the epoch root/proof
+    size_t thisIndex = chain.size() - 1;
+    if ((thisIndex + 1) % EPOCH_SIZE == 0 || thisIndex < static_cast<size_t>(EPOCH_SIZE)) {
+        std::string root = computeEpochRoot(thisIndex);
+        if (!root.empty()) {
+            chain.back().setEpochRoot(root);
+            std::string dummy = WinterfellStark::generateProof(root, root, root);
+            chain.back().setEpochProof(std::vector<uint8_t>(dummy.begin(), dummy.end()));
+            newBlock.setEpochRoot(root);
+            newBlock.setEpochProof(std::vector<uint8_t>(dummy.begin(), dummy.end()));
+        }
     }
 
     clearPendingTransactions();
