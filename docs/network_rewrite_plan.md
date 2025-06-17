@@ -5,16 +5,16 @@ implementation with a modular networking layer based on the `INetwork`
 interface.
 
 ## Batch 1 – Skeleton
-- [ ] Introduce the `INetwork` interface defining the minimal transport API.
-- [ ] Add `LegacyNetwork` wrapping the current `Network` class.
-- [ ] Add `StarkNetNetwork` skeleton for the future QUIC/STARK implementation.
-- [ ] Provide a simple factory (`make_network`) selecting an implementation.
-- [ ] Update `src/CMakeLists.txt` to compile the new files.
+- [x] Introduce the `INetwork` interface defining the minimal transport API.
+- [x] Add `LegacyNetwork` wrapping the current `Network` class.
+- [x] Add `StarkNetNetwork` skeleton for the future QUIC/STARK implementation.
+- [x] Provide a simple factory (`make_network`) selecting an implementation.
+- [x] Update `src/CMakeLists.txt` to compile the new files.
 
 ## Batch 2 – Bridging to old code
-- [ ] Implement the methods of `LegacyNetwork` by delegating to the existing
+- [x] Implement the methods of `LegacyNetwork` by delegating to the existing
   `Network` class from `network.cpp`.
-- [ ] Expose configuration flags so the node can select legacy or starknet mode.
+- [x] Expose configuration flags so the node can select legacy or starknet mode.
 
 ## Batch 3 – StarkNetNetwork I/O
 - [ ] Implement basic QUIC transport setup and message framing.

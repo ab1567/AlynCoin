@@ -3,6 +3,7 @@
 #include "crypto_utils.h"
 #include <chrono>
 #include "network.h"
+#include "network/v2/INetwork.h"
 #include <thread>
 #include "network/peer_blacklist.h"
 #include "wallet.h"
@@ -603,6 +604,7 @@ int main(int argc, char *argv[]) {
     std::string connectIP = "";
     std::string keyDir = DBPaths::getKeyDir();
     std::string publicPeerId;
+    std::string netImpl = "legacy";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -622,6 +624,9 @@ int main(int argc, char *argv[]) {
         } else if (arg == "--public-peer" && i + 1 < argc) {
             publicPeerId = argv[++i];
             std::cout << "🌐 Advertising as: " << publicPeerId << std::endl;
+        } else if ((arg == "--net" || arg == "--network") && i + 1 < argc) {
+            netImpl = argv[++i];
+            std::cout << "🌐 Selected network mode: " << netImpl << std::endl;
         } else if (arg == "--enable-agg-proof") {
             g_enableAggProof = true;
             std::cout << "🔧 Aggregated proof sync ENABLED" << std::endl;
@@ -657,6 +662,7 @@ int main(int argc, char *argv[]) {
         if (!publicPeerId.empty()) {
             network->setPublicPeerId(publicPeerId);
         }
+        std::cout << "🕸  Network implementation: " << netImpl << std::endl;
     } else {
         std::cerr << "⚠️ Network disabled due to PeerBlacklist failure.\n";
     }

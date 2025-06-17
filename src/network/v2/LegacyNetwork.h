@@ -2,6 +2,7 @@
 #define LEGACY_NETWORK_H
 
 #include "INetwork.h"
+#include "../network.h"
 
 /** Thin wrapper around existing Network class in network.cpp */
 class LegacyNetwork final : public INetwork {
@@ -19,7 +20,7 @@ public:
     void onBlock(BlockHandler h) override { m_onBlock = std::move(h); }
 private:
     BlockHandler m_onBlock;
-    // pointer or handle to the old singleton will be added later
+    Network* legacy();
 };
 
 #endif // LEGACY_NETWORK_H
