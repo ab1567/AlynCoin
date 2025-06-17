@@ -2212,6 +2212,16 @@ void Network::handleBase64Proto(const std::string &peer, const std::string &pref
                     size_t before = chain.getChain().size();
                     chain.compareAndMergeChains(receivedBlocks);
                     size_t after = chain.getChain().size();
+
+                    // Flush any buffered orphan blocks for this peer
+                    {
+                        std::unique_lock<std::shared_mutex> bufLock(incomingChainsMtx);
+                        auto itBuf = incomingChains.find(peer);
+                        if (itBuf != incomingChains.end() && !itBuf->second.empty()) {
+                            chain.compareAndMergeChains(itBuf->second);
+                            itBuf->second.clear();
+                        }
+                    }
                     if (peerManager)
                         peerManager->setPeerHeight(peer, static_cast<int>(receivedBlocks.size()) - 1);
                     std::cerr << "[handleBase64Proto] Chain merge complete (base64 streaming). "
