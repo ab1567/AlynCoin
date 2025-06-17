@@ -196,6 +196,7 @@ if(NOT SKIP_PROTOBUF_GEN)
         ${GENERATED_DIR}/crypto_protos.pb.cc
         ${GENERATED_DIR}/transaction_protos.pb.cc
         ${GENERATED_DIR}/main_protos.pb.cc
+        ${GENERATED_DIR}/handshake.pb.cc
         ${GENERATED_DIR}/nft.pb.cc
         ${GENERATED_DIR}/atomic_swap.pb.cc
         ${GENERATED_DIR}/identity.pb.cc
@@ -208,6 +209,7 @@ if(NOT SKIP_PROTOBUF_GEN)
         ${GENERATED_DIR}/crypto_protos.pb.h
         ${GENERATED_DIR}/transaction_protos.pb.h
         ${GENERATED_DIR}/main_protos.pb.h
+        ${GENERATED_DIR}/handshake.pb.h
         ${GENERATED_DIR}/nft.pb.h
         ${GENERATED_DIR}/atomic_swap.pb.h
         ${GENERATED_DIR}/identity.pb.h
@@ -224,6 +226,7 @@ if(NOT SKIP_PROTOBUF_GEN)
                 ${SOURCE_DIR}/proto/crypto_protos.proto
                 ${SOURCE_DIR}/proto/transaction_protos.proto
                 ${SOURCE_DIR}/proto/main_protos.proto
+                ${SOURCE_DIR}/proto/handshake.proto
                 ${SOURCE_DIR}/proto/nft.proto
                 ${SOURCE_DIR}/proto/atomic_swap.proto
                 ${SOURCE_DIR}/proto/identity.proto

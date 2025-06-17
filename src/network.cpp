@@ -1,5 +1,6 @@
 #include "generated/block_protos.pb.h"
 #include "generated/transaction_protos.pb.h"
+#include "handshake.pb.h"
 #include "network.h"
 #include "blockchain.h"
 #include "rollup/proofs/proof_verifier.h"
@@ -137,6 +138,7 @@ static std::string sanitizeBase64(const std::string& in)
 }
 static std::map<uint64_t, Block> futureBlockBuffer;
 static std::mutex futureBlockMtx;
+static constexpr std::size_t MAX_FUTURE_BLOCKS = 512;
 PubSubRouter g_pubsub;
 namespace fs = std::filesystem;
 Network* Network::instancePtr = nullptr;
@@ -759,59 +761,40 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
             : this->publicPeerId;
     };
 
-    // 1. Read & verify the handshake line
+    {
+        std::shared_lock<std::shared_mutex> g(peersMutex);
+        if (peerTransports.size() >= MAX_PEERS) {
+            std::cerr << "⚠️ [handlePeer] Max-peer cap reached (" << MAX_PEERS
+                      << "). Dropping incoming connection." << std::endl;
+            return;
+        }
+    }
+
+    // 1. Read & verify the handshake line (protobuf based)
     try {
         handshakeLine = transport->readLineBlocking();
-        static constexpr const char* protoPrefix = "ALYN|";
-        if (handshakeLine.rfind(protoPrefix, 0) == 0)
-            handshakeLine = handshakeLine.substr(std::strlen(protoPrefix));
+        static constexpr const char* protoPrefix = "ALYNB|";
+        if (handshakeLine.rfind(protoPrefix, 0) != 0)
+            throw std::runtime_error("invalid handshake prefix");
 
-        std::string handshakeBuf = handshakeLine;
-        Json::Value root;
-        Json::CharReaderBuilder rdr; std::string errs;
-        auto parseHandshake = [&]() -> bool {
-            std::istringstream iss(handshakeBuf);
-            return Json::parseFromStream(rdr, iss, &root, &errs) &&
-                   root.isMember("type") && root["type"].asString() == "handshake" &&
-                   root.isMember("port") && root.isMember("version");
-        };
+        std::string payload = handshakeLine.substr(std::strlen(protoPrefix));
+        std::string raw = Crypto::base64Decode(sanitizeBase64(payload), false);
 
-        int readAttempts = 0;
-        while (!parseHandshake()) {
-            if (++readAttempts > 3 || handshakeBuf.size() > 4096)
-                throw std::runtime_error("invalid handshake");
-            std::string extra = transport->readLineBlocking();
-            if (extra.rfind(protoPrefix, 0) == 0)
-                extra = extra.substr(std::strlen(protoPrefix));
-            handshakeBuf += extra;
-        }
+        alyncoin::Handshake hs;
+        if (!hs.ParseFromString(raw))
+            throw std::runtime_error("bad handshake protobuf");
 
-        handshakeLine = handshakeBuf;
-        // who’s really at the other end of the TCP stream?
         const auto senderIP   = transport->getRemoteIP();
         const auto senderPort = transport->getRemotePort();
         realPeerId            = senderIP + ":" + std::to_string(senderPort);
 
-        // what the peer *claims*
-        claimedPort    = root["port"].asString();
-        claimedVersion = root["version"].asString();
-        claimedNetwork = root.get("network_id", "").asString();
-        claimedIP      = root.get("ip", senderIP).asString();
-        remoteHeight   = root.get("height", 0).asInt();
-        if (root.isMember("capabilities")) {
-            for (const auto& c : root["capabilities"]) {
-                if (c.asString() == "agg_proof_v1") {
-                    remoteAgg = true;
-                    break;
-                }
-            }
-        }
-        // (1) normalize the port so it’s ALWAYS decimal
-        try {
-            const auto portDec = std::stoi(claimedPort, nullptr, 0);
-            claimedPort = std::to_string(portDec);
-        } catch (...) {
-            throw std::runtime_error("bad port in handshake");
+        claimedIP      = hs.ip().empty() ? senderIP : hs.ip();
+        claimedPort    = std::to_string(hs.port());
+        claimedVersion = hs.version();
+        claimedNetwork = hs.network_id();
+        remoteHeight   = hs.height();
+        for (const auto& cap : hs.capabilities()) {
+            if (cap == "agg_proof_v1") { remoteAgg = true; break; }
         }
 
         claimedPeerId = claimedIP + ":" + claimedPort;
@@ -840,8 +823,6 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
             return;
         }
 
-
-        
     } catch (const std::exception& ex) {
         // fallback: treat as unknown peer
         try {
@@ -910,22 +891,24 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
     broadcastPeerList();
 
     {
-        Json::Value hs;
-        hs["type"]        = "handshake";
-        hs["port"]        = std::to_string(this->port);
-        hs["version"]     = "1.0.0";
-        hs["network_id"]  = "mainnet";
-        hs["capabilities"] = Json::arrayValue;
-        hs["capabilities"].append("full");
-        hs["capabilities"].append("miner");
+        alyncoin::Handshake hs;
+        auto self  = selfAddr();
+        auto colon = self.find(':');
+        hs.set_node_id(self);
+        hs.set_ip(self.substr(0, colon));
+        hs.set_port(static_cast<uint32_t>(this->port));
+        hs.set_version("1.0.0");
+        hs.set_network_id("mainnet");
+        hs.add_capabilities("full");
+        hs.add_capabilities("miner");
         if (g_enableAggProof)
-            hs["capabilities"].append("agg_proof_v1");
-        hs["height"]      = Blockchain::getInstance().getHeight();
+            hs.add_capabilities("agg_proof_v1");
+        hs.set_height(Blockchain::getInstance().getHeight());
 
-        Json::StreamWriterBuilder wr;  wr["indentation"] = "";
-        std::string payload = Json::writeString(wr, hs);
+        std::string raw; hs.SerializeToString(&raw);
+        std::string payload = b64Flat(raw);
         if (transport && transport->isOpen())
-            transport->queueWrite(std::string("ALYN|") + payload + "\n");
+            transport->queueWrite(std::string("ALYNB|") + payload + "\n");
     }
 
     // 5. send the initial sync requests
@@ -2509,6 +2492,8 @@ void Network::handleNewBlock(const Block &newBlock) {
         std::cerr << "⚠️ [Node] Received future block. Buffering (idx=" << newBlock.getIndex() << ").\n";
         {
             std::lock_guard<std::mutex> lk(futureBlockMtx);
+            if (futureBlockBuffer.size() >= MAX_FUTURE_BLOCKS)
+                futureBlockBuffer.erase(futureBlockBuffer.begin());
             futureBlockBuffer[newBlock.getIndex()] = newBlock;
         }
 

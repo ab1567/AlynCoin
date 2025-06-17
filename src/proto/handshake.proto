@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package alyncoin;
+
+message Handshake {
+    string node_id = 1;
+    string ip = 2;
+    uint32 port = 3;
+    string version = 4;
+    string network_id = 5;
+    repeated string capabilities = 6;
+    uint64 height = 7;
+}
