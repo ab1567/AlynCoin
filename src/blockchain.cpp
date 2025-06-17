@@ -868,6 +868,7 @@ Block Blockchain::minePendingTransactions(
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         if (!Network::isUninitialized()) {
             Network::getInstance().broadcastBlock(blockCopy);
+            Network::getInstance().broadcastFullChain();
             if (!blockCopy.getEpochProof().empty()) {
                 Network::getInstance().broadcastEpochProof(
                     blockCopy.getIndex() / EPOCH_SIZE,

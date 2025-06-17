@@ -1991,6 +1991,24 @@ void Network::broadcastBlocks(const std::vector<Block>& blocks)
     }
 }
 
+// Broadcast entire blockchain to all peers
+void Network::broadcastFullChain()
+{
+    std::unordered_map<std::string, PeerEntry> peersCopy;
+    {
+        ScopedLockTracer tracer("broadcastFullChain");
+        std::shared_lock<std::shared_mutex> lk(peersMutex);
+        peersCopy = peerTransports;
+    }
+
+    for (auto& [peerId, entry] : peersCopy)
+    {
+        auto transport = entry.tx;
+        if (isSelfPeer(peerId) || !transport || !transport->isOpen()) continue;
+        sendFullChain(transport);
+    }
+}
+
 void Network::sendBlockToPeer(const std::string& peer, const Block& blk)
 {
     {
