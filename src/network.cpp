@@ -800,10 +800,9 @@ void Network::handlePeer(std::shared_ptr<Transport> transport)
         claimedPeerId = claimedIP + ":" + claimedPort;
 
         if (claimedIP != senderIP) {
-            std::cerr << "⚠️  [handlePeer] Claimed IP " << claimedIP
+            std::cerr << "ℹ️  [handlePeer] Claimed IP " << claimedIP
                       << " does not match connection IP " << senderIP
-                      << ". Dropping." << std::endl;
-            return;
+                      << ". Continuing." << std::endl;
         }
         if (claimedPort != std::to_string(senderPort)) {
             std::cerr << "ℹ️  [handlePeer] Claimed port " << claimedPort
