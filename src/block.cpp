@@ -156,7 +156,12 @@ std::vector<unsigned char> Block::getSignatureMessage() const {
     std::string hashed = Crypto::blake3Hash(input);
 
     if (hashed.size() != 32) {
-        std::cerr << "❌ [getSignatureMessage] Error: hash length is " << hashed.size() << " instead of 32 bytes!\n";
+        std::cerr << "⚠️ [getSignatureMessage] Unexpected hash size "
+                  << hashed.size() << ", forcing 32 bytes\n";
+        if (hashed.size() < 32)
+            hashed.resize(32, '\0');
+        else if (hashed.size() > 32)
+            hashed = hashed.substr(0, 32);
     }
 
     return std::vector<unsigned char>(hashed.begin(), hashed.end());
