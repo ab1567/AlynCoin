@@ -563,7 +563,8 @@ void Network::intelligentSync() {
 
     std::string majorityTipHash = peerManager->getMajorityTipHash();
     if (majorityTipHash.empty()) {
-        std::cerr << "⚠️ [Smart Sync] No majority tip hash found. Skipping sync.\n";
+        std::cerr << "⚠️ [Smart Sync] No majority tip hash found. Falling back to basic synchronization." << std::endl;
+        syncWithPeers();
         return;
     }
 
