@@ -70,6 +70,7 @@ file(GLOB SOURCES
     ${SOURCE_DIR}/governance/dao.cpp
     ${SOURCE_DIR}/governance/dao_storage.cpp
     ${SOURCE_DIR}/governance/devfund.cpp
+    ${SOURCE_DIR}/network/v2/*.cpp
 )
 
 list(APPEND SOURCES
@@ -149,6 +150,7 @@ include_directories(
     ${SOURCE_DIR}/self_healing
     ${SOURCE_DIR}/utils
     ${SOURCE_DIR}/network
+    ${SOURCE_DIR}/network/v2
 )
 
 # --------------------------
