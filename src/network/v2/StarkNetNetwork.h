@@ -24,6 +24,9 @@ public:
     void connectTo(const std::string& uri) override;
     void broadcastBlock(const Block& blk) override;
     void requestBlock(uint64_t index) override;
+    void broadcastEpochProof(int epochIdx, const std::string& root,
+                             const std::vector<uint8_t>& proof) override;
+    void requestEpochHeaders(const std::string& peerId) override;
 
     void onBlock(BlockHandler h) override { m_onBlock = std::move(h); }
 private:

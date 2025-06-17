@@ -25,6 +25,9 @@ public:
     virtual void connectTo(const std::string& uri) = 0;          // add peer (+ dial)
     virtual void broadcastBlock(const Block& blk)    = 0;        // push new block
     virtual void requestBlock(uint64_t index)        = 0;        // pull by height
+    virtual void broadcastEpochProof(int epochIdx, const std::string& root,
+                                     const std::vector<uint8_t>& proof) = 0;
+    virtual void requestEpochHeaders(const std::string& peerId) = 0;
 
     // ---- callbacks --------------------------------------------------------
     using BlockHandler = std::function<void(const Block&)>;
