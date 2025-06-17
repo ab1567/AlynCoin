@@ -1298,6 +1298,27 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
             }
         }
         if (!ps->fullChainActive) return;
+        try {
+            std::string raw = Crypto::base64Decode(sanitizeBase64(ps->fullChainB64), false);
+            alyncoin::BlockchainProto proto;
+            if (proto.ParseFromString(raw)) {
+                std::vector<Block> blocks;
+                for (const auto& pb : proto.blocks()) {
+                    try { blocks.push_back(Block::fromProto(pb, false)); }
+                    catch (...) { std::cerr << "⚠️ Skipped malformed block\n"; }
+                }
+                Blockchain& chain = Blockchain::getInstance();
+                chain.compareAndMergeChains(blocks);
+                if (peerManager)
+                    peerManager->setPeerHeight(claimedPeerId, static_cast<int>(blocks.size()) - 1);
+                std::lock_guard<std::mutex> lk(ps->m);
+                ps->fullChainB64.clear();
+                ps->fullChainActive = false;
+            }
+        } catch (...) {
+            /* keep buffering */
+        }
+        if (!ps->fullChainActive) return;
         return;
     }
 
@@ -1307,9 +1328,32 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
     if (!ps->fullChainActive &&
         data.find('|') == std::string::npos && data.size() > 50 && looksLikeBase64(data))
     {
-        std::lock_guard<std::mutex> lk(ps->m);
-        ps->fullChainB64 = data;
-        ps->fullChainActive = true;
+        {
+            std::lock_guard<std::mutex> lk(ps->m);
+            ps->fullChainB64 = data;
+            ps->fullChainActive = true;
+        }
+        try {
+            std::string raw = Crypto::base64Decode(sanitizeBase64(ps->fullChainB64), false);
+            alyncoin::BlockchainProto proto;
+            if (proto.ParseFromString(raw)) {
+                std::vector<Block> blocks;
+                for (const auto& pb : proto.blocks()) {
+                    try { blocks.push_back(Block::fromProto(pb, false)); }
+                    catch (...) { std::cerr << "⚠️ Skipped malformed block\n"; }
+                }
+                Blockchain& chain = Blockchain::getInstance();
+                chain.compareAndMergeChains(blocks);
+                if (peerManager)
+                    peerManager->setPeerHeight(claimedPeerId, static_cast<int>(blocks.size()) - 1);
+                std::lock_guard<std::mutex> lk(ps->m);
+                ps->fullChainB64.clear();
+                ps->fullChainActive = false;
+            }
+        } catch (...) {
+            /* wait for more */
+        }
+        if (!ps->fullChainActive) return;
         return;
     }
 
@@ -1452,15 +1496,61 @@ void Network::handleIncomingData(const std::string& claimedPeerId,
          * 3.  Additional FULL_CHAIN|… chunks keep arriving
          * ------------------------------------------------------------ */
         if (data.rfind("FULL_CHAIN|", 0) == 0) {
-            std::lock_guard<std::mutex> lk(ps->m);
-            ps->fullChainB64 += data.substr(sizeof("FULL_CHAIN|")-1);
+            {
+                std::lock_guard<std::mutex> lk(ps->m);
+                ps->fullChainB64 += data.substr(sizeof("FULL_CHAIN|")-1);
+            }
+            try {
+                std::string raw = Crypto::base64Decode(sanitizeBase64(ps->fullChainB64), false);
+                alyncoin::BlockchainProto proto;
+                if (proto.ParseFromString(raw)) {
+                    std::vector<Block> blocks;
+                    for (const auto& pb : proto.blocks()) {
+                        try { blocks.push_back(Block::fromProto(pb, false)); }
+                        catch (...) { std::cerr << "⚠️ Skipped malformed block\n"; }
+                    }
+                    Blockchain& chain = Blockchain::getInstance();
+                    chain.compareAndMergeChains(blocks);
+                    if (peerManager)
+                        peerManager->setPeerHeight(claimedPeerId, static_cast<int>(blocks.size()) - 1);
+                    std::lock_guard<std::mutex> lk(ps->m);
+                    ps->fullChainB64.clear();
+                    ps->fullChainActive = false;
+                }
+            } catch (...) {
+                /* continue buffering */
+            }
+            if (!ps->fullChainActive) return;
             return;
         }
 
         /* treat raw, delimiter-less base64 as before */
         if (data.find('|') == std::string::npos && looksLikeBase64(data)) {
-            std::lock_guard<std::mutex> lk(ps->m);
-            ps->fullChainB64 += data;
+            {
+                std::lock_guard<std::mutex> lk(ps->m);
+                ps->fullChainB64 += data;
+            }
+            try {
+                std::string raw = Crypto::base64Decode(sanitizeBase64(ps->fullChainB64), false);
+                alyncoin::BlockchainProto proto;
+                if (proto.ParseFromString(raw)) {
+                    std::vector<Block> blocks;
+                    for (const auto& pb : proto.blocks()) {
+                        try { blocks.push_back(Block::fromProto(pb, false)); }
+                        catch (...) { std::cerr << "⚠️ Skipped malformed block\n"; }
+                    }
+                    Blockchain& chain = Blockchain::getInstance();
+                    chain.compareAndMergeChains(blocks);
+                    if (peerManager)
+                        peerManager->setPeerHeight(claimedPeerId, static_cast<int>(blocks.size()) - 1);
+                    std::lock_guard<std::mutex> lk(ps->m);
+                    ps->fullChainB64.clear();
+                    ps->fullChainActive = false;
+                }
+            } catch (...) {
+                /* continue buffering */
+            }
+            if (!ps->fullChainActive) return;
             return;
         }
 
