@@ -2764,57 +2764,72 @@ bool Network::connectToNode(const std::string &host, int port)
             if (peerManager) peerManager->connectToPeer(peerKey);
         }
 
-    Json::Value handshake;
-    handshake["type"]        = "handshake";
-    handshake["port"]        = std::to_string(this->port);
-    handshake["version"]     = "1.0.0";
-    handshake["network_id"]  = "mainnet";
-    handshake["capabilities"]= Json::arrayValue;
-    handshake["capabilities"].append("full");
-    handshake["capabilities"].append("miner");
-    if (g_enableAggProof)
-        handshake["capabilities"].append("agg_proof_v1");
-    handshake["height"]      = Blockchain::getInstance().getHeight();
+        alyncoin::Handshake hs;
+        auto self  = this->publicPeerId.empty()
+            ? "127.0.0.1:" + std::to_string(this->port)
+            : this->publicPeerId;
+        auto colon = self.find(':');
+        hs.set_node_id(self);
+        hs.set_ip(self.substr(0, colon));
+        hs.set_port(static_cast<uint32_t>(this->port));
+        hs.set_version("1.0.0");
+        hs.set_network_id("mainnet");
+        hs.add_capabilities("full");
+        hs.add_capabilities("miner");
+        if (g_enableAggProof)
+            hs.add_capabilities("agg_proof_v1");
+        hs.set_height(Blockchain::getInstance().getHeight());
 
-        Json::StreamWriterBuilder wr;  wr["indentation"] = "";
-        std::string payload = Json::writeString(wr, handshake);
-        transport->queueWrite(std::string("ALYN|") + payload + '\n');
+        std::string raw; hs.SerializeToString(&raw);
+        std::string payload = b64Flat(raw);
+        transport->queueWrite(std::string("ALYNB|") + payload + '\n');
 
-        std::cout << "🤝 Sent handshake to " << peerKey << ": ALYN|"
+        std::cout << "🤝 Sent handshake to " << peerKey << ": ALYNB|"
                   << payload << std::flush
                   << "✅ Connected to new peer: " << peerKey << '\n';
 
         // --- wait briefly for their handshake so we know their height ---
         std::string remoteHs = transport->readLineWithTimeout(2);
-        if (!remoteHs.empty() && remoteHs.rfind("ALYN|",0)==0)
-            remoteHs = remoteHs.substr(5);
-        if (!remoteHs.empty() && remoteHs.front()=='{' && remoteHs.back()=='}') {
-            Json::Value rh;
-            Json::CharReaderBuilder rb; std::string errs;
-            std::istringstream iss(remoteHs);
-            if (Json::parseFromStream(rb, iss, &rh, &errs) &&
-                rh["type"].asString()=="handshake")
-            {
-                int h = rh.get("height",0).asInt();
-                bool agg = false;
-                if (rh.isMember("capabilities")) {
-                    for (const auto& c : rh["capabilities"]) {
-                        if (c.asString()=="agg_proof_v1") { agg = true; break; }
+        int h = 0; bool agg = false;
+        if (!remoteHs.empty()) {
+            if (remoteHs.rfind("ALYNB|",0)==0) {
+                std::string payload = remoteHs.substr(6);
+                try {
+                    std::string raw = Crypto::base64Decode(sanitizeBase64(payload), false);
+                    alyncoin::Handshake rh; if (rh.ParseFromString(raw)) {
+                        h = static_cast<int>(rh.height());
+                        for (const auto& c : rh.capabilities())
+                            if (c=="agg_proof_v1") { agg=true; break; }
+                    }
+                } catch (...) { /* ignore */ }
+            } else if (remoteHs.rfind("ALYN|",0)==0) {
+                remoteHs = remoteHs.substr(5);
+                if (!remoteHs.empty() && remoteHs.front()=='{' && remoteHs.back()=='}') {
+                    Json::Value rh; Json::CharReaderBuilder rb; std::string errs; std::istringstream iss(remoteHs);
+                    if (Json::parseFromStream(rb, iss, &rh, &errs) && rh["type"].asString()=="handshake") {
+                        h = rh.get("height",0).asInt();
+                        if (rh.isMember("capabilities")) {
+                            for (const auto& c : rh["capabilities"]) {
+                                if (c.asString()=="agg_proof_v1") { agg=true; break; }
+                            }
+                        }
                     }
                 }
-                {
-                    ScopedLockTracer _t("connectToNode/remoteHs");
-                    std::unique_lock<std::shared_mutex> lk(peersMutex);
-                    auto it = peerTransports.find(peerKey);
-                    if (it != peerTransports.end() && it->second.state)
-                        it->second.state->supportsAggProof = agg;
-                }
-                if (peerManager) peerManager->setPeerHeight(peerKey, h);
-                if (h > (int)Blockchain::getInstance().getHeight())
-                    transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
-                else if (h < (int)Blockchain::getInstance().getHeight() && !agg)
-                    sendFullChain(transport);
             }
+        }
+        if (h || agg) {
+            {
+                ScopedLockTracer _t("connectToNode/remoteHs");
+                std::unique_lock<std::shared_mutex> lk(peersMutex);
+                auto it = peerTransports.find(peerKey);
+                if (it != peerTransports.end() && it->second.state)
+                    it->second.state->supportsAggProof = agg;
+            }
+            if (peerManager) peerManager->setPeerHeight(peerKey, h);
+            if (h > (int)Blockchain::getInstance().getHeight())
+                transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+            else if (h < (int)Blockchain::getInstance().getHeight() && !agg)
+                sendFullChain(transport);
         }
 
         startReadLoop(peerKey, transport);
