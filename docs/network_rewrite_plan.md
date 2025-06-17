@@ -17,9 +17,9 @@ interface.
 - [x] Expose configuration flags so the node can select legacy or starknet mode.
 
 ## Batch 3 – StarkNetNetwork I/O
-- [ ] Implement basic QUIC transport setup and message framing.
-- [ ] Support block broadcast and block request with stub handlers.
-- [ ] Hook callbacks for block arrival through the `onBlock` subscription.
+- [x] Implement basic QUIC transport setup and message framing.
+- [x] Support block broadcast and block request with stub handlers.
+- [x] Hook callbacks for block arrival through the `onBlock` subscription.
 
 ## Batch 4 – Epoch sync and proofs
 - [ ] Serialize recursive STARK proofs together with block headers.
