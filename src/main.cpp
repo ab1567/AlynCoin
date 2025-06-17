@@ -602,6 +602,7 @@ int main(int argc, char *argv[]) {
     std::string dbPath = DBPaths::getBlockchainDB();
     std::string connectIP = "";
     std::string keyDir = DBPaths::getKeyDir();
+    std::string publicPeerId;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -618,6 +619,9 @@ int main(int argc, char *argv[]) {
         } else if (arg == "--keypath" && i + 1 < argc) {
             keyDir = argv[++i];
             if (keyDir.back() != '/') keyDir += '/';
+        } else if (arg == "--public-peer" && i + 1 < argc) {
+            publicPeerId = argv[++i];
+            std::cout << "🌐 Advertising as: " << publicPeerId << std::endl;
         } else if (arg == "--enable-agg-proof") {
             g_enableAggProof = true;
             std::cout << "🔧 Aggregated proof sync ENABLED" << std::endl;
@@ -650,6 +654,9 @@ int main(int argc, char *argv[]) {
     if (peerBlacklistPtr) {
         network = &Network::getInstance(port, &blockchain, peerBlacklistPtr.get());
         blockchain.setNetwork(network);
+        if (!publicPeerId.empty()) {
+            network->setPublicPeerId(publicPeerId);
+        }
     } else {
         std::cerr << "⚠️ Network disabled due to PeerBlacklist failure.\n";
     }
