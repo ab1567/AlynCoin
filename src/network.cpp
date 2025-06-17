@@ -1140,6 +1140,36 @@ void Network::periodicSync()
 
         std::cerr << "📡 [DEBUG] Height probe sent to " << peerId << '\n';
     }
+
+    if (peerManager)
+    {
+        size_t localHeight = Blockchain::getInstance().getHeight();
+        int networkHeight  = peerManager->getMedianNetworkHeight();
+
+        for (const auto& p : peerTransports)
+        {
+            const auto &peerId  = p.first;
+            auto transport = p.second.tx;
+            if (!transport || !transport->isOpen()) continue;
+
+            if (networkHeight > static_cast<int>(localHeight))
+            {
+                std::cerr << "📡 [periodicSync] Network ahead. Requesting chain from "
+                          << peerId << '\n';
+                if (peerSupportsAggProof(peerId))
+                    requestEpochHeaders(peerId);
+                else
+                    transport->queueWrite("ALYN|REQUEST_BLOCKCHAIN\n");
+            }
+            else if (networkHeight < static_cast<int>(localHeight))
+            {
+                std::cerr << "📡 [periodicSync] Local chain ahead. Sending chain to "
+                          << peerId << '\n';
+                if (!peerSupportsAggProof(peerId))
+                    sendFullChain(transport);
+            }
+        }
+    }
 }
 
 //
