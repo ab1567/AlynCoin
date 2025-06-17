@@ -3,6 +3,7 @@
 #include "crypto_utils.h"
 #include <chrono>
 #include "network.h"
+#include "network/v2/INetwork.h"
 #include <thread>
 #include "network/peer_blacklist.h"
 #include "wallet.h"
@@ -101,7 +102,8 @@ svr.Post("/rpc", [blockchain, network](const httplib::Request& req, httplib::Res
             Block mined = blockchain->mineBlock(miner);
             if (!mined.getHash().empty()) {
                 blockchain->saveToDB();
-                if (network) network->broadcastBlock(mined);
+                if (netIface) netIface->broadcastBlock(mined);
+                else if (network) network->broadcastBlock(mined);
                 blockchain->reloadBlockchainState();
                 output = {{"result", mined.getHash()}};
             } else {
@@ -122,7 +124,8 @@ svr.Post("/rpc", [blockchain, network](const httplib::Request& req, httplib::Res
                         blockchain->saveToDB();
                         try {
                             blockchain->reloadBlockchainState();
-                            if (network) network->broadcastBlock(minedBlock);
+                            if (netIface) netIface->broadcastBlock(minedBlock);
+                            else if (network) network->broadcastBlock(minedBlock);
                         } catch (...) {}
                     }
                     std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -603,6 +606,7 @@ int main(int argc, char *argv[]) {
     std::string connectIP = "";
     std::string keyDir = DBPaths::getKeyDir();
     std::string publicPeerId;
+    std::string netImpl = "legacy";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -622,6 +626,9 @@ int main(int argc, char *argv[]) {
         } else if (arg == "--public-peer" && i + 1 < argc) {
             publicPeerId = argv[++i];
             std::cout << "🌐 Advertising as: " << publicPeerId << std::endl;
+        } else if (arg.rfind("--net=",0)==0) {
+            netImpl = arg.substr(6);
+            std::cout << "🌐 Network implementation: " << netImpl << std::endl;
         } else if (arg == "--enable-agg-proof") {
             g_enableAggProof = true;
             std::cout << "🔧 Aggregated proof sync ENABLED" << std::endl;
@@ -651,15 +658,24 @@ int main(int argc, char *argv[]) {
      }
 
     Network* network = nullptr;
+    std::unique_ptr<INetwork> netIface;
     if (peerBlacklistPtr) {
-        network = &Network::getInstance(port, &blockchain, peerBlacklistPtr.get());
-        blockchain.setNetwork(network);
-        if (!publicPeerId.empty()) {
-            network->setPublicPeerId(publicPeerId);
+        if (netImpl == "legacy") {
+            network = &Network::getInstance(port, &blockchain, peerBlacklistPtr.get());
+            blockchain.setNetwork(network);
+            if (!publicPeerId.empty()) {
+                network->setPublicPeerId(publicPeerId);
+            }
+            netIface = make_network("legacy", port, &blockchain, peerBlacklistPtr.get());
+        } else {
+            netIface = make_network(netImpl, port, &blockchain, peerBlacklistPtr.get());
         }
     } else {
         std::cerr << "⚠️ Network disabled due to PeerBlacklist failure.\n";
     }
+
+    if (netIface)
+        netIface->start();
 
      blockchain.loadFromDB();
      blockchain.reloadBlockchainState();
@@ -693,8 +709,10 @@ if (argc >= 3 && std::string(argv[1]) == "mineonce") {
     if (!minedBlock.getHash().empty()) {
         b.saveToDB();
         b.reloadBlockchainState();
-        if (!Network::isUninitialized()) {
-            Network::getInstance().broadcastBlock(minedBlock);  // ✅ reuse existing Network instance
+        if (netIface) {
+            netIface->broadcastBlock(minedBlock);
+        } else if (!Network::isUninitialized()) {
+            Network::getInstance().broadcastBlock(minedBlock);
         }
         std::cout << "✅ Block mined by: " << minerAddress << "\n"
                   << "🧱 Block Hash: " << minedBlock.getHash() << "\n"
@@ -725,7 +743,9 @@ if (argc >= 3 && std::string(argv[1]) == "mineloop") {
 
             try {
                 b.reloadBlockchainState();
-                if (!Network::isUninitialized()) {
+                if (netIface) {
+                    netIface->broadcastBlock(minedBlock);
+                } else if (!Network::isUninitialized()) {
                     Network::getInstance().broadcastBlock(minedBlock);  // ✅ no conflict
                 }
             } catch (const std::exception &e) {
@@ -870,9 +890,9 @@ if ((argc >= 6) && (std::string(argv[1]) == "sendl1" || std::string(argv[1]) == 
     if (!tx.getSignatureDilithium().empty() && !tx.getSignatureFalcon().empty()) {
         b.addTransaction(tx);
         b.savePendingTransactionsToDB();
-	if (!Network::isUninitialized()) {
-	    Network::getInstance().broadcastTransaction(tx);
-	}
+        if (network) {
+            network->broadcastTransaction(tx);
+        }
 	std::cout << "✅ Transaction broadcasted: " << from << " → " << to
 
                   << " (" << amount << " AlynCoin, metadata: " << metadata << ")\n";
@@ -1138,9 +1158,9 @@ if (argc >= 3 && std::string(argv[1]) == "rollup") {
 
     if (blockchain.isRollupBlockValid(rollup)) {
         blockchain.addRollupBlock(rollup);
-	if (!Network::isUninitialized()) {
-    	Network::getInstance().broadcastRollupBlock(rollup);
-	}
+        if (network) {
+            network->broadcastRollupBlock(rollup);
+        }
         std::cout << "✅ Rollup Block created successfully!\n";
         std::cout << "📦 Rollup Hash: " << rollup.getHash() << "\n";
     } else {
@@ -1187,9 +1207,9 @@ if (argc >= 3 && std::string(argv[1]) == "recursive-rollup") {
 
     if (blockchain.isRollupBlockValid(rollup)) {
         blockchain.addRollupBlock(rollup);
-	if (!Network::isUninitialized()) {
-	    Network::getInstance().broadcastRollupBlock(rollup);
-	}
+        if (network) {
+            network->broadcastRollupBlock(rollup);
+        }
         std::cout << "✅ Recursive Rollup Block created successfully!\n";
         std::cout << "📦 Rollup Hash: " << rollup.getHash() << "\n";
     } else {
@@ -1600,7 +1620,8 @@ if (cmd == "nft-verifyhash" && argc >= 3) {
             if (!mined.getHash().empty()) {
                 blockchain.saveToDB();
                 blockchain.savePendingTransactionsToDB();
-                if (network) network->broadcastBlock(mined);
+                if (netIface) netIface->broadcastBlock(mined);
+                else if (network) network->broadcastBlock(mined);
                 blockchain.reloadBlockchainState();
                 std::cout << "✅ Block mined and broadcasted.\n";
             }
