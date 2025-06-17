@@ -2,9 +2,21 @@
 #include "generated/block_protos.pb.h"
 #include "generated/sync_protos.pb.h"
 #include "block.h"
+#include "crypto_utils.h"
+#include <mutex>
+#include <unordered_map>
+#include <array>
+#include <cstring>
 #include <iostream>
 
 using boost::asio::ip::udp;
+
+struct EpochProofEntry {
+    std::string root;
+    std::vector<uint8_t> proof;
+};
+static std::unordered_map<int, EpochProofEntry> receivedEpochProofs;
+static std::mutex epochProofMutex;
 
 StarkNetNetwork::StarkNetNetwork() = default;
 StarkNetNetwork::~StarkNetNetwork() { stop(); }
@@ -69,6 +81,27 @@ void StarkNetNetwork::requestBlock(uint64_t idx) {
     }
 }
 
+void StarkNetNetwork::broadcastEpochProof(int epochIdx, const std::string& root,
+                                          const std::vector<uint8_t>& proof) {
+    if (!m_socket) return;
+    std::string b64 = Crypto::base64Encode(std::string(proof.begin(), proof.end()), false);
+    std::string frame = "ALYN|EPOCH_PROOF|" + std::to_string(epochIdx) + "|" + root + "|" + b64;
+    for (const auto& ep : m_peers) {
+        boost::system::error_code ec;
+        m_socket->send_to(boost::asio::buffer(frame), ep, 0, ec);
+    }
+}
+
+void StarkNetNetwork::requestEpochHeaders(const std::string& peerId) {
+    if (!m_socket) return;
+    (void)peerId; // broadcast to all for now
+    std::string frame = "ALYN|REQUEST_EPOCH_HEADERS";
+    for (const auto& ep : m_peers) {
+        boost::system::error_code ec;
+        m_socket->send_to(boost::asio::buffer(frame), ep, 0, ec);
+    }
+}
+
 void StarkNetNetwork::ioLoop() {
     std::array<char, 8192> buf{};
     udp::endpoint sender;
@@ -102,5 +135,20 @@ void StarkNetNetwork::handleDatagram(const std::string& msg, const udp::endpoint
         if (req.ParseFromString(body)) {
             std::cout << "[starknet] block request for " << req.block_index() << "\n";
         }
+    } else if (msg.rfind("ALYN|EPOCH_PROOF|", 0) == 0) {
+        std::string body = msg.substr(strlen("ALYN|EPOCH_PROOF|"));
+        size_t p1 = body.find('|');
+        size_t p2 = body.find('|', p1 + 1);
+        if (p1 == std::string::npos || p2 == std::string::npos) return;
+        int epoch = std::stoi(body.substr(0, p1));
+        std::string root = body.substr(p1 + 1, p2 - p1 - 1);
+        std::string proofB64 = body.substr(p2 + 1);
+        std::string raw = Crypto::base64Decode(proofB64, false);
+        std::vector<uint8_t> proof(raw.begin(), raw.end());
+        std::lock_guard<std::mutex> lk(epochProofMutex);
+        receivedEpochProofs[epoch] = {root, proof};
+        std::cout << "[starknet] epoch proof " << epoch << " received\n";
+    } else if (msg == "ALYN|REQUEST_EPOCH_HEADERS") {
+        std::cout << "[starknet] epoch header request from " << from.address() << "\n";
     }
 }

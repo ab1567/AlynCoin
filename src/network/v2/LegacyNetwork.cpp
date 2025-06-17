@@ -47,6 +47,19 @@ void LegacyNetwork::requestBlock(uint64_t index) {
     }
 }
 
+void LegacyNetwork::broadcastEpochProof(int epochIdx, const std::string& root,
+                                        const std::vector<uint8_t>& proof) {
+    if (auto n = legacy()) {
+        n->broadcastEpochProof(epochIdx, root, proof);
+    }
+}
+
+void LegacyNetwork::requestEpochHeaders(const std::string& peerId) {
+    if (auto n = legacy()) {
+        n->requestEpochHeaders(peerId);
+    }
+}
+
 Network* LegacyNetwork::legacy() {
     return Network::getExistingInstance();
 }

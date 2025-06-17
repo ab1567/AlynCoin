@@ -22,8 +22,8 @@ interface.
 - [x] Hook callbacks for block arrival through the `onBlock` subscription.
 
 ## Batch 4 – Epoch sync and proofs
-- [ ] Serialize recursive STARK proofs together with block headers.
-- [ ] Add epoch proof messages and state snapshot download logic.
+- [x] Serialize recursive STARK proofs together with block headers.
+- [x] Add epoch proof messages and state snapshot download logic.
 - [ ] Integrate with the prover/verifier components.
 
 ## Batch 5 – Remove legacy path
