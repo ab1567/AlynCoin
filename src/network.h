@@ -73,6 +73,7 @@ public:
     void broadcastMessage(const std::string &message);
     void broadcastBlock(const Block &block, bool force = false);
     void broadcastBlocks(const std::vector<Block>& blocks);
+    void broadcastFullChain();
     void sendBlockToPeer(const std::string& peer, const Block& blk);
     void sendInventory(const std::string& peer);
     PeerManager *getPeerManager();
