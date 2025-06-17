@@ -49,7 +49,7 @@
 
 // ==== [Globals, Statics] ====
 // Flag to toggle optional aggregated proof synchronization
-bool g_enableAggProof = false;
+bool g_enableAggProof = true; // default to small-proof syncing
 static std::unordered_map<std::string, std::vector<Block>> incomingChains;
 static std::shared_mutex incomingChainsMtx;
 // Buffers for in-progress FULL_CHAIN syncs

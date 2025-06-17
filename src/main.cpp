@@ -630,6 +630,9 @@ int main(int argc, char *argv[]) {
         } else if (arg == "--enable-agg-proof") {
             g_enableAggProof = true;
             std::cout << "🔧 Aggregated proof sync ENABLED" << std::endl;
+        } else if (arg == "--disable-agg-proof") {
+            g_enableAggProof = false;
+            std::cout << "🔧 Aggregated proof sync DISABLED" << std::endl;
         }
     }
     if (!portSpecified) {
