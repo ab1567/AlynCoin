@@ -36,16 +36,20 @@ double totalSupply = 0.0;
 static Blockchain* g_blockchain_singleton = nullptr;
 
 // Compute BLAKE3 hash of concatenated block hashes for the epoch ending at
-// endIndex (inclusive). Returns empty string if insufficient history.
+// endIndex (inclusive). If the chain is shorter than a full epoch, hash the
+// available range so the first blocks still produce a root.
 std::string Blockchain::computeEpochRoot(size_t endIndex) const {
-    if (endIndex + 1 < static_cast<size_t>(EPOCH_SIZE))
-        return "";
     if (endIndex >= chain.size())
         return "";
-    size_t start = endIndex + 1 - EPOCH_SIZE;
+
+    size_t start = 0;
+    if (endIndex + 1 > static_cast<size_t>(EPOCH_SIZE))
+        start = endIndex + 1 - EPOCH_SIZE;
+
     std::string combined;
     for (size_t i = start; i <= endIndex; ++i)
         combined += chain[i].getHash();
+
     return Crypto::blake3(combined);
 }
 Blockchain& getBlockchain() {
@@ -831,17 +835,16 @@ Block Blockchain::minePendingTransactions(
         return Block();
     }
 
-    // If this block completes an epoch, compute aggregated root and dummy proof
+    // If this block completes an epoch (or we're still within the first epoch),
+    // compute the aggregated root so epochs are available from genesis.
     size_t nextIndex = chain.size();
-    if ((nextIndex + 1) % EPOCH_SIZE == 0 && chain.size() >= static_cast<size_t>(EPOCH_SIZE - 1)) {
-        std::string combined;
-        for (size_t i = nextIndex + 1 - EPOCH_SIZE; i < chain.size(); ++i)
-            combined += chain[i].getHash();
-        combined += newBlock.getHash();
-        std::string root = Crypto::blake3(combined);
-        newBlock.setEpochRoot(root);
-        std::string dummy = WinterfellStark::generateProof(root, root, root);
-        newBlock.setEpochProof(std::vector<uint8_t>(dummy.begin(), dummy.end()));
+    if ((nextIndex + 1) % EPOCH_SIZE == 0 || nextIndex < static_cast<size_t>(EPOCH_SIZE)) {
+        std::string root = computeEpochRoot(nextIndex);
+        if (!root.empty()) {
+            newBlock.setEpochRoot(root);
+            std::string dummy = WinterfellStark::generateProof(root, root, root);
+            newBlock.setEpochProof(std::vector<uint8_t>(dummy.begin(), dummy.end()));
+        }
     }
 
     if (newBlock.getZkProof().empty()) {
