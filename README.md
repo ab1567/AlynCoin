@@ -59,6 +59,13 @@ if you need to change it and ensure it does not conflict with the peer network p
 Use `--dbpath <dir>` to specify a custom data directory or `--connect <ip>` to
 connect to an existing peer.
 
+The node stores its blockchain data and blacklist under `~/.alyncoin` by
+default. If you encounter permission errors when the node tries to create these
+directories (for example:
+`filesystem error: cannot create directories: Permission denied`), set a custom
+location using the `--dbpath` flag or define environment variables such as
+`ALYNCOIN_BLOCKCHAIN_DB` and `ALYNCOIN_BLACKLIST_DB` before starting the node.
+
 `alyncoin-cli` can be used for command line transactions without running the
 interactive node.
 
@@ -76,6 +83,11 @@ pip install -r application/requirements.txt
 
 # launch the wallet GUI
 python3 application/main.py
+
+The GUI attempts to start the node automatically if a binary named
+`alyncoin` exists in `application/build`. Ensure that this file is
+executable (`chmod +x application/build/alyncoin`) if you rely on the
+automatic launch feature.
 ```
 
 The miner will now automatically retry if a block fails to mine during the loop,
