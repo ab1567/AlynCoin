@@ -1354,6 +1354,11 @@ void Network::handleNewBlock(const Block &newBlock, const std::string &sender) {
             << newBlock.getIndex() << " hash=" << newBlock.getHash() << '\n';
   const int expectedIndex = blockchain.getLatestBlock().getIndex() + 1;
 
+  // Refresh remote peer height early so menu actions see the latest height
+  if (peerManager && !sender.empty()) {
+    peerManager->setPeerHeight(sender, newBlock.getIndex());
+  }
+
   // 1) PoW and zk-STARK check
   if (!newBlock.hasValidProofOfWork()) {
     std::cerr << "❌ [ERROR] Block PoW check failed!\n";
