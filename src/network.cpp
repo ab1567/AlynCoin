@@ -1,5 +1,6 @@
 #include "network.h"
 #include "blockchain.h"
+#include "constants.h"
 #include "crypto_utils.h"
 #include "generated/block_protos.pb.h"
 #include "generated/sync_protos.pb.h"
@@ -505,6 +506,7 @@ void Network::autoMineBlock() {
           }
           broadcastBlock(minedBlock);
           broadcastHeight(minedBlock.getIndex());
+          broadcastHandshake();
           autoSyncIfBehind();
           std::cout << "✅ Mined & broadcasted block: " << minedBlock.getHash()
                     << std::endl;
@@ -1455,6 +1457,7 @@ void Network::handleNewBlock(const Block &newBlock, const std::string &sender) {
       peerManager->setPeerTipHash(sender, newBlock.getHash());
     }
     broadcastHeight(newBlock.getIndex());
+    broadcastHandshake();
     autoSyncIfBehind();
 
     std::cout << "✅ Block added successfully! Index: " << newBlock.getIndex()
@@ -1913,7 +1916,8 @@ bool Network::connectToNode(const std::string &host, int port) {
         std::cerr << "⚠️ [connectToNode] handshake timeout for " << peerKey
                   << '\n';
         dialCooldown[peerKey] =
-            std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(DIAL_COOLDOWN_MS);
         std::lock_guard<std::timed_mutex> g(peersMutex);
         auto it = peerTransports.find(peerKey);
         if (it != peerTransports.end() && it->second.tx &&
@@ -1937,7 +1941,8 @@ bool Network::connectToNode(const std::string &host, int port) {
       std::cerr << "⚠️ [connectToNode] invalid handshake from " << peerKey
                 << '\n';
       dialCooldown[peerKey] =
-          std::chrono::steady_clock::now() + std::chrono::seconds(60);
+          std::chrono::steady_clock::now() +
+          std::chrono::milliseconds(DIAL_COOLDOWN_MS);
       std::lock_guard<std::timed_mutex> g(peersMutex);
       auto it = peerTransports.find(peerKey);
       if (it != peerTransports.end() && it->second.tx && it->second.tx->isOpen()) {
@@ -1958,7 +1963,8 @@ bool Network::connectToNode(const std::string &host, int port) {
                 << " but we need " << kFrameRevision
                 << " – dropping for incompatibility." << '\n';
       dialCooldown[peerKey] =
-          std::chrono::steady_clock::now() + std::chrono::seconds(60);
+          std::chrono::steady_clock::now() +
+          std::chrono::milliseconds(DIAL_COOLDOWN_MS);
       tx->close();
       return false;
     }
@@ -1974,7 +1980,8 @@ bool Network::connectToNode(const std::string &host, int port) {
     if (myId > peerKey) {
       std::cout << "🔁 tie-break: dropping outbound to " << peerKey << '\n';
       dialCooldown[peerKey] =
-          std::chrono::steady_clock::now() + std::chrono::seconds(60);
+          std::chrono::steady_clock::now() +
+          std::chrono::milliseconds(DIAL_COOLDOWN_MS);
       tx->close();
       return false;
     }
@@ -2471,6 +2478,7 @@ void Network::handleSnapshotEnd(const std::string &peer) {
               peer, chain.computeCumulativeDifficulty(chain.getChain()));
         }
         broadcastHeight(chain.getHeight());
+        broadcastHandshake();
         return;
       } else {
         std::cerr << "⚠️ [SNAPSHOT] Tail push block failed validation\n";
@@ -2521,6 +2529,7 @@ void Network::handleSnapshotEnd(const std::string &peer) {
       peerManager->setPeerWork(peer, remoteWork);
     }
     broadcastHeight(chain.getHeight());
+    broadcastHandshake();
 
     // Immediately request tail blocks for any missing blocks
     requestTailBlocks(peer, snap.height());
@@ -2593,6 +2602,7 @@ void Network::handleTailBlocks(const std::string &peer,
     if (peerManager)
       peerManager->setPeerHeight(peer, chain.getHeight());
     broadcastHeight(chain.getHeight());
+    broadcastHandshake();
   } catch (const std::exception &ex) {
     std::cerr << "❌ [TAIL_BLOCKS] Failed to apply tail blocks from peer "
               << peer << ": " << ex.what() << "\n";

@@ -16,3 +16,6 @@ inline constexpr int DESYNC_THRESHOLD = 5000;
 // at 256 KiB to avoid overrunning peer receive windows.
 inline constexpr std::size_t MAX_SNAPSHOT_CHUNK_SIZE = 256 * 1024; // 256 KiB
 inline constexpr std::size_t MAX_PEERS = 32;                       // hard cap
+// Min delay before we retry dialing a peer after a failed or conflicting
+// connection attempt. Keep short so test nodes reconnect quickly.
+inline constexpr int DIAL_COOLDOWN_MS = 2000; // 2 s
