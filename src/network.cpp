@@ -1182,7 +1182,7 @@ void Network::broadcastBlock(const Block &block, bool /*force*/) {
     if (!seen.insert(transport).second)
       continue;
 
-    bool ok = sendFrame(transport, fr, /*immediate=*/false);
+    bool ok = sendFrameImmediate(transport, fr);
     if (!ok) {
       std::cerr << "❌ failed to send block " << block.getIndex() << " to "
                 << peerId << " – marking peer offline" << '\n';
