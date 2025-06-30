@@ -213,6 +213,8 @@ void Network::markPeerOffline(const std::string &peerId) {
   std::lock_guard<std::timed_mutex> lk(peersMutex);
   auto it = peerTransports.find(peerId);
   if (it != peerTransports.end()) {
+    if (it->second.state)
+      it->second.state->active = false;
     if (it->second.tx)
       it->second.tx->close();
     peerTransports.erase(it);
@@ -776,6 +778,16 @@ void Network::handlePeer(std::shared_ptr<Transport> transport) {
       return;
     }
 
+    // Tie-break: deterministically choose the outbound side if IDs race
+    std::string myId = selfAddr();
+    if (myId < claimedPeerId) {
+      std::cout << "🔁 tie-break: keeping outbound, closing inbound from "
+                << claimedPeerId << '\n';
+      if (transport)
+        transport->close();
+      return;
+    }
+
     std::cout << "🤝 Handshake from " << realPeerId << " | ver "
               << claimedVersion << " | net " << claimedNetwork << " | height "
               << remoteHeight << '\n';
@@ -804,11 +816,15 @@ void Network::handlePeer(std::shared_ptr<Transport> transport) {
     auto itExisting = peerTransports.find(claimedPeerId);
     if (itExisting != peerTransports.end() && itExisting->second.tx &&
         itExisting->second.tx->isOpen()) {
-      std::cout << "🔁 duplicate connection from " << claimedPeerId
-                << " closed\n";
-      if (transport)
-        transport->close();
-      return;
+      if (itExisting->second.state && itExisting->second.state->active) {
+        std::cout << "🔁 duplicate connection from " << claimedPeerId
+                  << " closed\n";
+        if (transport)
+          transport->close();
+        return;
+      }
+      if (itExisting->second.tx)
+        itExisting->second.tx->close();
     }
 
     auto &entry = peerTransports[claimedPeerId];
@@ -818,6 +834,7 @@ void Network::handlePeer(std::shared_ptr<Transport> transport) {
       entry.state = std::make_shared<PeerState>();
     entry.state->supportsAggProof = remoteAgg;
     entry.state->supportsSnapshot = remoteSnap;
+    entry.state->active = true;
 
     if (peerManager) {
       peerManager->connectToPeer(claimedPeerId);
@@ -1057,8 +1074,10 @@ void Network::periodicSync() {
 
   for (const auto &peerId : knownPeers) {
     auto it = peerTransports.find(peerId);
-    if (it == peerTransports.end() || !it->second.tx ||
-        !it->second.tx->isOpen()) {
+    bool active = it != peerTransports.end() && it->second.tx &&
+                  it->second.tx->isOpen() && it->second.state &&
+                  it->second.state->active;
+    if (!active) {
       size_t pos = peerId.find(':');
       if (pos != std::string::npos) {
         std::string ip = peerId.substr(0, pos);
@@ -1835,13 +1854,20 @@ void Network::dispatch(const alyncoin::net::Frame &f, const std::string &peer) {
 // Connect to Node
 
 bool Network::connectToNode(const std::string &host, int port) {
+  const std::string peerKey = host + ':' + std::to_string(port);
+  auto cdIt = dialCooldown.find(peerKey);
+  if (cdIt != dialCooldown.end() && cdIt->second > std::chrono::steady_clock::now()) {
+    std::cerr << "⚠️ [connectToNode] " << peerKey << " in cooldown period\n";
+    return false;
+  } else if (cdIt != dialCooldown.end()) {
+    dialCooldown.erase(cdIt);
+  }
+
   if (peerTransports.size() >= MAX_PEERS) {
     std::cerr << "⚠️ [connectToNode] peer cap reached, skip " << host << ':'
               << port << '\n';
     return false;
   }
-
-  const std::string peerKey = host + ':' + std::to_string(port);
   if (bannedPeers.count(peerKey)) {
     std::cerr << "⚠️ [connectToNode] " << peerKey << " is banned.\n";
     return false;
@@ -1882,6 +1908,8 @@ bool Network::connectToNode(const std::string &host, int port) {
       if (!tcp->waitReadable(10)) {
         std::cerr << "⚠️ [connectToNode] handshake timeout for " << peerKey
                   << '\n';
+        dialCooldown[peerKey] =
+            std::chrono::steady_clock::now() + std::chrono::seconds(60);
         std::lock_guard<std::timed_mutex> g(peersMutex);
         auto it = peerTransports.find(peerKey);
         if (it != peerTransports.end() && it->second.tx &&
@@ -1904,6 +1932,8 @@ bool Network::connectToNode(const std::string &host, int port) {
     if (blob.empty() || !fr.ParseFromString(blob) || !fr.has_handshake()) {
       std::cerr << "⚠️ [connectToNode] invalid handshake from " << peerKey
                 << '\n';
+      dialCooldown[peerKey] =
+          std::chrono::steady_clock::now() + std::chrono::seconds(60);
       std::lock_guard<std::timed_mutex> g(peersMutex);
       auto it = peerTransports.find(peerKey);
       if (it != peerTransports.end() && it->second.tx && it->second.tx->isOpen()) {
@@ -1923,6 +1953,8 @@ bool Network::connectToNode(const std::string &host, int port) {
       std::cerr << "⚠️ [handshake] peer uses frame_rev=" << remoteRev
                 << " but we need " << kFrameRevision
                 << " – dropping for incompatibility." << '\n';
+      dialCooldown[peerKey] =
+          std::chrono::steady_clock::now() + std::chrono::seconds(60);
       tx->close();
       return false;
     }
@@ -1933,21 +1965,36 @@ bool Network::connectToNode(const std::string &host, int port) {
         theirSnap = true;
     }
 
+    std::string myId = publicPeerId.empty() ?
+                           "127.0.0.1:" + std::to_string(port) : publicPeerId;
+    if (myId > peerKey) {
+      std::cout << "🔁 tie-break: dropping outbound to " << peerKey << '\n';
+      dialCooldown[peerKey] =
+          std::chrono::steady_clock::now() + std::chrono::seconds(60);
+      tx->close();
+      return false;
+    }
+
     {
       ScopedLockTracer t("connectToNode/register");
       std::lock_guard<std::timed_mutex> lk(peersMutex);
-      if (peerTransports.count(peerKey)) {
-        std::cout << "🔁 already connected to " << peerKey << '\n';
-        // ensure pending handshake is cleaned up before returning
-        if (tx)
-          tx->close();
-        return false;
+      auto it = peerTransports.find(peerKey);
+      if (it != peerTransports.end() && it->second.tx && it->second.tx->isOpen()) {
+        if (it->second.state && it->second.state->active) {
+          std::cout << "🔁 already connected to " << peerKey << '\n';
+          if (tx)
+            tx->close();
+          return false;
+        }
+        if (it->second.tx)
+          it->second.tx->close();
       }
       peerTransports[peerKey] = {tx, std::make_shared<PeerState>()};
       knownPeers.insert(peerKey);
       auto st = peerTransports[peerKey].state;
       st->supportsAggProof = theirAgg;
       st->supportsSnapshot = theirSnap;
+      st->active = true;
       if (peerManager) {
         peerManager->connectToPeer(peerKey);
         peerManager->setPeerHeight(peerKey, theirHeight);

@@ -27,6 +27,7 @@ struct PeerState {
   bool fullChainActive{false};
   bool supportsAggProof{false};
   bool supportsSnapshot{false};
+  bool active{false};
   std::mutex m;
 };
 

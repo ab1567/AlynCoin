@@ -15,6 +15,7 @@
 #include <boost/asio.hpp>
 #include <fstream>
 #include <generated/net_frame.pb.h>
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <mutex>
@@ -178,6 +179,8 @@ private:
   std::unordered_set<std::string> knownPeers;
   PeerBlacklist *blacklist;
   std::unordered_set<std::string> seenTxHashes;
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point>
+      dialCooldown;
   static Network *instancePtr;
   std::vector<std::thread> threads_;
 
