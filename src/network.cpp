@@ -1189,8 +1189,12 @@ void Network::broadcastBlock(const Block &block, bool /*force*/) {
       markPeerOffline(peerId);
       continue;
     }
+    std::string realId = transport->remoteId();
     std::cout << "✅ [broadcastBlock] Block " << block.getIndex() << " sent to "
-              << peerId << '\n';
+              << peerId;
+    if (!realId.empty() && realId != peerId)
+      std::cout << " (" << realId << ")";
+    std::cout << '\n';
   }
 }
 
