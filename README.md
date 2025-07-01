@@ -88,7 +88,8 @@ The node exposes an HTTP RPC server on port `1567` by default. Use `--rpcport <p
 if you need to change it and ensure it does not conflict with the peer network port.
 
 Use `--dbpath <dir>` to specify a custom data directory or `--connect <ip>` to
-connect to an existing peer.
+connect to an existing peer. If your node is reachable on a different external
+address, supply it with `--public <ip:port>` so peers can connect back.
 
 ## Join the Network
 
