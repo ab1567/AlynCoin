@@ -720,6 +720,7 @@ void Network::handlePeer(std::shared_ptr<Transport> transport) {
   int remoteHeight = 0;
   bool remoteAgg = false;
   bool remoteSnap = false;
+  bool preferOutbound = false;
 
   /* what *we* look like to the outside world */
   const auto selfAddr = [this] {
@@ -780,15 +781,9 @@ void Network::handlePeer(std::shared_ptr<Transport> transport) {
       return;
     }
 
-    // Tie-break: deterministically choose the outbound side if IDs race
+    // Decide duplicate preference after parsing the handshake
     std::string myId = selfAddr();
-    if (myId < claimedPeerId) {
-      std::cout << "🔁 tie-break: keeping outbound, closing inbound from "
-                << claimedPeerId << '\n';
-      if (transport)
-        transport->close();
-      return;
-    }
+    preferOutbound = (myId < claimedPeerId);
 
     std::cout << "🤝 Handshake from " << realPeerId << " | ver "
               << claimedVersion << " | net " << claimedNetwork << " | height "
@@ -801,6 +796,16 @@ void Network::handlePeer(std::shared_ptr<Transport> transport) {
   } catch (const std::exception &ex) {
     std::cerr << "❌ [handlePeer] invalid binary handshake (" << ex.what()
               << ")" << '\n';
+    return;
+  }
+
+  // Send our handshake back before evaluating duplicate rules
+  finishOutboundHandshake(transport);
+  if (preferOutbound) {
+    std::thread([tr = transport] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      tr->close();
+    }).detach();
     return;
   }
 
@@ -845,27 +850,6 @@ void Network::handlePeer(std::shared_ptr<Transport> transport) {
   }
 
   std::cout << "✅ Registered peer: " << claimedPeerId << '\n';
-
-  // ── 4. push our handshake back ──────────────────────────────────────────
-  {
-    alyncoin::net::Handshake hs;
-    Blockchain &bc = Blockchain::getInstance();
-    hs.set_version("1.0.0");
-    hs.set_network_id("mainnet");
-    hs.set_height(bc.getHeight());
-    hs.set_listen_port(this->port);
-    if (!bc.getChain().empty())
-      hs.set_genesis_hash(bc.getChain().front().getHash());
-    hs.add_capabilities("full");
-    hs.add_capabilities("miner");
-    hs.add_capabilities("agg_proof_v1");
-    hs.add_capabilities("snapshot_v1");
-    hs.add_capabilities("binary_v1");
-    hs.set_frame_rev(kFrameRevision);
-    alyncoin::net::Frame out;
-    out.mutable_handshake()->CopyFrom(hs);
-    sendFrameImmediate(transport, out);
-  }
 
   // ── 5. arm read loop + initial requests ────────────────────────────────
   startBinaryReadLoop(claimedPeerId, transport);

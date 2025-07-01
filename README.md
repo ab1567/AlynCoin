@@ -89,7 +89,9 @@ if you need to change it and ensure it does not conflict with the peer network p
 
 Use `--dbpath <dir>` to specify a custom data directory or `--connect <ip>` to
 connect to an existing peer. If your node is reachable on a different external
-address, supply it with `--public <ip:port>` so peers can connect back.
+address, supply it with `--public <ip:port>` so peers can connect back. When
+running multiple nodes, always pass a stable `--public` address to avoid
+duplicate-connection loops.
 Example:
 ```bash
 ./build/alyncoin --public <ip:port> --connect <peer_ip>
