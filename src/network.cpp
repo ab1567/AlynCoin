@@ -1391,12 +1391,7 @@ void Network::handleNewBlock(const Block &newBlock, const std::string &sender) {
       for (const auto &peer : peerTransports) {
         sendForkRecoveryRequest(peer.first, newBlock.getHash());
       }
-
-      // Store the block so that fork resolution can happen later
-      if (!blockchain.addBlock(newBlock)) {
-        std::cerr << "❌ [Fork] Failed to store competing block." << std::endl;
-      }
-      return; // do not continue normal tip-extend flow
+      return;
     }
   }
 
