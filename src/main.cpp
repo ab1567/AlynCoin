@@ -618,6 +618,7 @@ int main(int argc, char *argv[]) {
     std::string connectIP = "";
     std::string keyDir = DBPaths::getKeyDir();
     bool autoMine = true;
+    std::string publicPeerIdArg = "";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -638,6 +639,9 @@ int main(int argc, char *argv[]) {
         } else if (arg == "--keypath" && i + 1 < argc) {
             keyDir = argv[++i];
             if (keyDir.back() != '/') keyDir += '/';
+        } else if (arg == "--public" && i + 1 < argc) {
+            publicPeerIdArg = argv[++i];
+            std::cout << "🌐 Public peer ID: " << publicPeerIdArg << std::endl;
         } else if (arg == "--no-auto-mine") {
             autoMine = false;
         }
@@ -691,6 +695,10 @@ int main(int argc, char *argv[]) {
     if (peerBlacklistPtr) {
         Network::autoMineEnabled = autoMine;
         network = &Network::getInstance(port, &blockchain, peerBlacklistPtr.get());
+        if (!publicPeerIdArg.empty()) {
+            network->setPublicPeerId(publicPeerIdArg);
+            std::cout << "🌐 Using public peer id: " << publicPeerIdArg << std::endl;
+        }
         blockchain.setNetwork(network);
     } else {
         std::cerr << "⚠️ Network disabled due to PeerBlacklist failure.\n";
