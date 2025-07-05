@@ -42,7 +42,7 @@ void ensureRootConsistency(const Block& b, int idx) {
 // ✅ Default Constructor (No Arguments)
 Block::Block()
     : index(0), previousHash("0000"), minerAddress("System"),  hash(""),
-      difficulty(0), reward(0.0) {
+      difficulty(0), difficultyBits(GENESIS_DIFFICULTY), reward(0.0) {
   timestamp = std::time(nullptr);
   dilithiumSignature.clear();
   falconSignature.clear();
@@ -57,9 +57,10 @@ Block::Block()
 Block::Block(int index, const std::string &previousHash,
              const std::vector<Transaction> &transactions,
              const std::string &minerAddress, int difficulty,
-             uint64_t timestamp, uint64_t nonce)
+             uint64_t timestamp, uint64_t nonce,
+             uint32_t bits)
     : index(index), previousHash(Crypto::normaliseHash(previousHash)), transactions(transactions),
-      minerAddress(minerAddress), difficulty(difficulty),
+      minerAddress(minerAddress), difficulty(difficulty), difficultyBits(bits),
       timestamp(timestamp), nonce(nonce), reward(0.0) {
   hash = "";
   keccakHash = Crypto::keccak256(hash);
@@ -545,6 +546,7 @@ alyncoin::BlockProto Block::toProtobuf() const {
     proto.set_nonce(nonce);
     proto.set_timestamp(timestamp);
     proto.set_difficulty(difficulty);
+    proto.set_difficulty_bits(difficultyBits);
     proto.set_block_signature(blkSig);
     proto.set_keccak_hash(keccakHash);
 
@@ -717,6 +719,8 @@ Block Block::fromProto(const alyncoin::BlockProto& protoBlock, bool allowPartial
         newBlock.nonce              = protoBlock.nonce();
         newBlock.timestamp          = protoBlock.timestamp();
         newBlock.difficulty         = protoBlock.difficulty();
+        newBlock.difficultyBits     = protoBlock.difficulty_bits() != 0 ?
+                                      protoBlock.difficulty_bits() : GENESIS_DIFFICULTY;
         newBlock.blockSignature     = safeStr(protoBlock.block_signature(),   "block_signature");
         newBlock.keccakHash         = safeStr(protoBlock.keccak_hash(),       "keccak_hash");
         newBlock.reward             = protoBlock.reward();

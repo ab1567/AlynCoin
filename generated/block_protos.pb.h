@@ -199,6 +199,7 @@ class BlockProto final :
     kNonceFieldNumber = 6,
     kTimestampFieldNumber = 7,
     kRewardFieldNumber = 18,
+    kDifficultyBitsFieldNumber = 22,
   };
   // repeated .alyncoin.TransactionProto transactions = 3;
   int transactions_size() const;
@@ -481,6 +482,15 @@ class BlockProto final :
   void _internal_set_reward(double value);
   public:
 
+  // uint32 difficulty_bits = 22;
+  void clear_difficulty_bits();
+  uint32_t difficulty_bits() const;
+  void set_difficulty_bits(uint32_t value);
+  private:
+  uint32_t _internal_difficulty_bits() const;
+  void _internal_set_difficulty_bits(uint32_t value);
+  public:
+
   // @@protoc_insertion_point(class_scope:alyncoin.BlockProto)
  private:
   class _Internal;
@@ -512,6 +522,7 @@ class BlockProto final :
     uint64_t nonce_;
     uint64_t timestamp_;
     double reward_;
+    uint32_t difficulty_bits_;
   };
   union { Impl_ _impl_; };
   friend struct ::TableStruct_block_5fprotos_2eproto;
@@ -1407,6 +1418,26 @@ inline void BlockProto::set_allocated_epoch_proof(std::string* epoch_proof) {
   }
 #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
   // @@protoc_insertion_point(field_set_allocated:alyncoin.BlockProto.epoch_proof)
+}
+
+// uint32 difficulty_bits = 22;
+inline void BlockProto::clear_difficulty_bits() {
+  _impl_.difficulty_bits_ = 0u;
+}
+inline uint32_t BlockProto::_internal_difficulty_bits() const {
+  return _impl_.difficulty_bits_;
+}
+inline uint32_t BlockProto::difficulty_bits() const {
+  // @@protoc_insertion_point(field_get:alyncoin.BlockProto.difficulty_bits)
+  return _internal_difficulty_bits();
+}
+inline void BlockProto::_internal_set_difficulty_bits(uint32_t value) {
+  
+  _impl_.difficulty_bits_ = value;
+}
+inline void BlockProto::set_difficulty_bits(uint32_t value) {
+  _internal_set_difficulty_bits(value);
+  // @@protoc_insertion_point(field_set:alyncoin.BlockProto.difficulty_bits)
 }
 
 #ifdef __GNUC__

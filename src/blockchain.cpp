@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <boost/multiprecision/cpp_int.hpp>
 #include <iostream>
 #include "db/db_paths.h"
 #include <locale>
@@ -30,10 +31,14 @@
 #define ROLLUP_CHAIN_FILE "rollup_chain.dat"
 namespace fs = std::filesystem;
 const std::string BLOCKCHAIN_DB_PATH = DBPaths::getBlockchainDB();
+using boost::multiprecision::uint256_t;
 std::vector<StateChannel> stateChannels;
 std::vector<RollupBlock> rollupBlocks;
 double totalSupply = 0.0;
 static Blockchain* g_blockchain_singleton = nullptr;
+
+static uint256_t compactToTarget(uint32_t bits);
+static inline uint256_t blockWork(const Block& b);
 // Compute BLAKE3 hash of concatenated block hashes for the epoch ending at
 // endIndex (inclusive). Returns empty string if insufficient history.
 std::string Blockchain::computeEpochRoot(size_t endIndex) const {
@@ -264,7 +269,8 @@ Block Blockchain::createGenesisBlock(bool force)
     /* ----------------------------------------------------------------- */
 
     Block genesis(0, prevHash, transactions,
-                  creator, difficulty, fixedTime, 0);
+                  creator, difficulty, fixedTime, 0,
+                  GENESIS_DIFFICULTY);
 
     /* hashes / roots --------------------------------------------------- */
     std::string txRoot = genesis.computeTransactionsHash();
@@ -472,10 +478,7 @@ bool Blockchain::addBlock(const Block &block) {
         std::cerr << "[addBlock] PUSH_BACK to chain: idx=" << block.getIndex()
                   << ", hash=" << block.getHash() << std::endl;
         chain.push_back(block);
-        if (block.getDifficulty() >= 0 && block.getDifficulty() < 64)
-            totalWork += (1ULL << block.getDifficulty());
-        else
-            totalWork += 1ULL;
+        totalWork += static_cast<uint64_t>(blockWork(block));
         if (network && network->getPeerManager())
             network->getPeerManager()->setLocalWork(totalWork);
         if (network)
@@ -892,7 +895,8 @@ Block Blockchain::minePendingTransactions(
         minerAddress,
         difficulty,
         timestamp,
-        0
+        0,
+        GENESIS_DIFFICULTY
     );
 
     // ✅ Store reward in block
@@ -1298,10 +1302,7 @@ bool Blockchain::loadFromDB() {
 
     totalWork = 0;
     for (const auto &b : chain) {
-        if (b.getDifficulty() >= 0 && b.getDifficulty() < 64)
-            totalWork += (1ULL << b.getDifficulty());
-        else
-            totalWork += 1ULL;
+        totalWork += static_cast<uint64_t>(blockWork(b));
     }
     if (network && network->getPeerManager())
         network->getPeerManager()->setLocalWork(totalWork);
@@ -2744,19 +2745,42 @@ int Blockchain::findForkCommonAncestor(const std::vector<Block>& otherChain) con
     return commonIndex;
 }
 
+static uint256_t compactToTarget(uint32_t bits)
+{
+    uint32_t exp = bits >> 24;
+    uint32_t mant = bits & 0x007fffff;
+    uint256_t target = mant;
+    if (exp <= 3) target >>= 8 * (3 - exp);
+    else          target <<= 8 * (exp - 3);
+    return target;
+}
+
+static inline uint256_t blockWork(const Block& b)
+{
+    uint256_t two256 = uint256_t(1);
+    two256 <<= 256;
+    uint256_t tgt = compactToTarget(b.getDifficultyBits());
+    return two256 / (tgt + 1);
+}
+
 // ✅ Compute total cumulative difficulty of a chain
 uint64_t Blockchain::computeCumulativeDifficulty(const std::vector<Block>& chainRef) const {
-    uint64_t total = 0;
-    for (size_t i = 0; i < chainRef.size(); ++i) {
-        const Block& blk = chainRef[i];
-        if (blk.difficulty >= 0 && blk.difficulty < 64)
-            total += (1ULL << blk.difficulty);
-        else
-            total += 1;
-        std::cerr << "[DIFF] Block idx=" << blk.getIndex() << " hash=" << blk.getHash().substr(0,12)
-                  << " diff=" << blk.difficulty << " total=" << total << "\n";
-    }
-    return total;
+    uint256_t total = accumulatedWork(chainRef);
+    return static_cast<uint64_t>(total);
+}
+
+uint256_t Blockchain::accumulatedWork(const std::vector<Block>& v) const {
+    uint256_t w = 0;
+    for (const auto& b : v) w += blockWork(b);
+    return w;
+}
+
+bool Blockchain::isBetter(const std::vector<Block>& cand,
+                          const std::vector<Block>& best) const {
+    uint256_t w1 = accumulatedWork(cand);
+    uint256_t w2 = accumulatedWork(best);
+    if (w1 != w2) return w1 > w2;
+    return cand.back().getHash() < best.back().getHash();
 }
 //
 std::vector<Block> Blockchain::getChainUpTo(size_t height) const
@@ -2816,16 +2840,12 @@ void Blockchain::compareAndMergeChains(const std::vector<Block>& otherChain) {
         return;
     }
 
-    const uint64_t mainWork = computeCumulativeDifficulty(chain);
-    const uint64_t newWork  = computeCumulativeDifficulty(otherChain);
-
-    int commonIdxTmp = findForkCommonAncestor(otherChain);
-    int reorgDepth = commonIdxTmp == -1 ? chain.size() : chain.size() - commonIdxTmp - 1;
-    if (reorgDepth > 100 || newWork <= static_cast<uint64_t>(mainWork * 1.01)) {
-        std::cerr << "⚠️ [Fork] Rejected chain with work " << newWork
-                  << " (local=" << mainWork << ", reorgDepth=" << reorgDepth << ")" << std::endl;
+    std::vector<Block> main(chain.begin(), chain.end());
+    if (!isBetter(otherChain, main)) {
+        std::cout << "⚠️ [Fork] Incoming chain is not stronger. Skipping merge.\n";
         return;
     }
+    int commonIdxTmp = findForkCommonAncestor(otherChain);
 
     // ✅ CASE: local is prefix — always append, skip difficulty
     bool isPrefix = true;
@@ -2852,7 +2872,7 @@ void Blockchain::compareAndMergeChains(const std::vector<Block>& otherChain) {
     // ✅ CASE: same length but different tip
     if (otherChain.size() == chain.size() &&
         chain.back().getHash() != otherChain.back().getHash()) {
-        if (newWork > mainWork) {
+        if (isBetter(otherChain, chain)) {
             std::cerr << "🔁 [Fork] Same length but higher difficulty. Replacing chain.\n";
             chain = otherChain;
             saveToDB();
@@ -2865,7 +2885,7 @@ void Blockchain::compareAndMergeChains(const std::vector<Block>& otherChain) {
     }
 
     // ✅ CASE: longer but not prefix — use difficulty
-    if (newWork <= mainWork) {
+    if (!isBetter(otherChain, chain)) {
         std::cout << "⚠️ [Fork] Incoming chain is not stronger. Skipping merge.\n";
         return;
     }

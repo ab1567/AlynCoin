@@ -42,6 +42,7 @@ public:
   friend void ensureRootConsistency(const Block& b, int idx);
   std::string keccakHash;
   int difficulty;
+  uint32_t difficultyBits = 0;
 
   static constexpr double INITIAL_REWARD = 100.0;
   static constexpr double DECAY_RATE = 0.00005;
@@ -51,7 +52,8 @@ public:
   Block(int index, const std::string &previousHash,
         const std::vector<Transaction> &transactions,
         const std::string &minerAddress, int difficulty,
-        uint64_t timestamp, uint64_t nonce);
+        uint64_t timestamp, uint64_t nonce,
+        uint32_t bits = GENESIS_DIFFICULTY);
   Block(const Block &other) = default;
   Block &operator=(const Block &other) = default;
 
@@ -76,6 +78,7 @@ public:
   std::vector<unsigned char> getPublicKeyFalcon() const { return publicKeyFalcon; }
   double getReward() const;
   int getDifficulty() const { return difficulty; }
+  uint32_t getDifficultyBits() const { return difficultyBits; }
   // --- Setters ---
   void setIndex(int idx) { index = idx; }
   void setPreviousHash(const std::string &prev) { previousHash = Crypto::normaliseHash(prev); }
@@ -87,6 +90,7 @@ public:
   void setTimestamp(time_t ts) { timestamp = ts; }
   void setKeccakHash(const std::string &khash) { keccakHash = khash; }
   void setDifficulty(int diff) { difficulty = diff; }
+  void setDifficultyBits(uint32_t bits) { difficultyBits = bits; }
   void setDilithiumSignature(const std::vector<unsigned char> &sig) { dilithiumSignature = sig; }
   void setFalconSignature(const std::vector<unsigned char> &sig)    { falconSignature = sig; }
   void setPublicKeyDilithium(const std::vector<unsigned char> &pk) { publicKeyDilithium = pk; }

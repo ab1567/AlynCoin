@@ -13,6 +13,7 @@
 #include "transaction.h"
 #include <atomic>
 #include <boost/asio.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
 #include <cstdint>
 #include <ctime>
 #include "db/db_paths.h"
@@ -221,6 +222,8 @@ public:
   bool verifyForkSafety(const std::vector<Block>& otherChain) const;
   int findForkCommonAncestor(const std::vector<Block>& otherChain) const;
   uint64_t computeCumulativeDifficulty(const std::vector<Block>& chainRef) const;
+  boost::multiprecision::uint256_t accumulatedWork(const std::vector<Block>& v) const;
+  bool isBetter(const std::vector<Block>& cand, const std::vector<Block>& best) const;
   void setPendingForkChain(const std::vector<Block>& fork);
   std::vector<Block> getPendingForkChain() const;
   void clearPendingForkChain();
