@@ -13,6 +13,7 @@
 #include <thread>
 
 std::atomic<bool> miningActive{false};
+std::atomic<bool> miningPaused{false};
 
 bool containsValidTransaction(const std::vector<Transaction> &transactions) {
     for (const auto &tx : transactions) {
@@ -38,6 +39,20 @@ void Miner::startMiningProcess(const std::string &minerAddress) {
         blockchain.reloadBlockchainState();  // Load once before loop
 
         while (miningActive) {
+            if (!Network::isUninitialized()) {
+                PeerManager* pm = Network::getInstance().getPeerManager();
+                if (pm && blockchain.getHeight() < static_cast<int>(pm->getMedianNetworkHeight()) - 3) {
+                    Miner::pauseMining();
+                } else {
+                    Miner::resumeMining();
+                }
+            }
+
+            if (miningPaused) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                continue;
+            }
+
             Block minedBlock = blockchain.mineBlock(minerAddress);
 
             if (minedBlock.getHash().empty()) {
@@ -113,3 +128,7 @@ std::string Miner::mineBlock(int difficulty) {
     std::cout << "✅ Found valid PoW hash: " << newHash << "\n";
     return newHash;
 }
+
+void Miner::pauseMining() { miningPaused = true; }
+
+void Miner::resumeMining() { miningPaused = false; }

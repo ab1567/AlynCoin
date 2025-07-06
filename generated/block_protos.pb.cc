@@ -45,7 +45,8 @@ PROTOBUF_CONSTEXPR BlockProto::BlockProto(
   , /*decltype(_impl_.difficulty_)*/0
   , /*decltype(_impl_.nonce_)*/uint64_t{0u}
   , /*decltype(_impl_.timestamp_)*/uint64_t{0u}
-  , /*decltype(_impl_.reward_)*/0} {}
+  , /*decltype(_impl_.reward_)*/0
+  , /*decltype(_impl_.total_work_)*/uint64_t{0u}} {}
 struct BlockProtoDefaultTypeInternal {
   PROTOBUF_CONSTEXPR BlockProtoDefaultTypeInternal()
       : _instance(::_pbi::ConstantInitialized{}) {}
@@ -88,6 +89,7 @@ const uint32_t TableStruct_block_5fprotos_2eproto::offsets[] PROTOBUF_SECTION_VA
   PROTOBUF_FIELD_OFFSET(::alyncoin::BlockProto, _impl_.l2_transactions_),
   PROTOBUF_FIELD_OFFSET(::alyncoin::BlockProto, _impl_.epoch_root_),
   PROTOBUF_FIELD_OFFSET(::alyncoin::BlockProto, _impl_.epoch_proof_),
+  PROTOBUF_FIELD_OFFSET(::alyncoin::BlockProto, _impl_.total_work_),
   ~0u,
   ~0u,
   ~0u,
@@ -109,9 +111,10 @@ const uint32_t TableStruct_block_5fprotos_2eproto::offsets[] PROTOBUF_SECTION_VA
   ~0u,
   ~0u,
   ~0u,
+  ~0u,
 };
 static const ::_pbi::MigrationSchema schemas[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) = {
-  { 0, 27, -1, sizeof(::alyncoin::BlockProto)},
+  { 0, 28, -1, sizeof(::alyncoin::BlockProto)},
 };
 
 static const ::_pb::Message* const file_default_instances[] = {
@@ -120,7 +123,7 @@ static const ::_pb::Message* const file_default_instances[] = {
 
 const char descriptor_table_protodef_block_5fprotos_2eproto[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) =
   "\n\022block_protos.proto\022\010alyncoin\032\030transact"
-  "ion_protos.proto\"\237\004\n\nBlockProto\022\r\n\005index"
+  "ion_protos.proto\"\263\004\n\nBlockProto\022\r\n\005index"
   "\030\001 \001(\005\022\025\n\rprevious_hash\030\002 \001(\t\0220\n\014transac"
   "tions\030\003 \003(\0132\032.alyncoin.TransactionProto\022"
   "\014\n\004hash\030\004 \001(\t\022\025\n\rminer_address\030\005 \001(\t\022\r\n\005"
@@ -133,15 +136,15 @@ const char descriptor_table_protodef_block_5fprotos_2eproto[] PROTOBUF_SECTION_V
   "e_root\030\020 \001(\t\022\026\n\016tx_merkle_root\030\021 \001(\t\022\023\n\006"
   "reward\030\022 \001(\001H\000\210\001\001\0223\n\017l2_transactions\030\023 \003"
   "(\0132\032.alyncoin.TransactionProto\022\022\n\nepoch_"
-  "root\030\024 \001(\t\022\023\n\013epoch_proof\030\025 \001(\014B\t\n\007_rewa"
-  "rdb\006proto3"
+  "root\030\024 \001(\t\022\023\n\013epoch_proof\030\025 \001(\014\022\022\n\ntotal"
+  "_work\030\026 \001(\004B\t\n\007_rewardb\006proto3"
   ;
 static const ::_pbi::DescriptorTable* const descriptor_table_block_5fprotos_2eproto_deps[1] = {
   &::descriptor_table_transaction_5fprotos_2eproto,
 };
 static ::_pbi::once_flag descriptor_table_block_5fprotos_2eproto_once;
 const ::_pbi::DescriptorTable descriptor_table_block_5fprotos_2eproto = {
-    false, false, 610, descriptor_table_protodef_block_5fprotos_2eproto,
+    false, false, 630, descriptor_table_protodef_block_5fprotos_2eproto,
     "block_protos.proto",
     &descriptor_table_block_5fprotos_2eproto_once, descriptor_table_block_5fprotos_2eproto_deps, 1, 1,
     schemas, file_default_instances, TableStruct_block_5fprotos_2eproto::offsets,
@@ -204,7 +207,8 @@ BlockProto::BlockProto(const BlockProto& from)
     , decltype(_impl_.difficulty_){}
     , decltype(_impl_.nonce_){}
     , decltype(_impl_.timestamp_){}
-    , decltype(_impl_.reward_){}};
+    , decltype(_impl_.reward_){}
+    , decltype(_impl_.total_work_){}};
 
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   _impl_.previous_hash_.InitDefault();
@@ -320,8 +324,8 @@ BlockProto::BlockProto(const BlockProto& from)
       _this->GetArenaForAllocation());
   }
   ::memcpy(&_impl_.index_, &from._impl_.index_,
-    static_cast<size_t>(reinterpret_cast<char*>(&_impl_.reward_) -
-    reinterpret_cast<char*>(&_impl_.index_)) + sizeof(_impl_.reward_));
+    static_cast<size_t>(reinterpret_cast<char*>(&_impl_.total_work_) -
+    reinterpret_cast<char*>(&_impl_.index_)) + sizeof(_impl_.total_work_));
   // @@protoc_insertion_point(copy_constructor:alyncoin.BlockProto)
 }
 
@@ -353,6 +357,7 @@ inline void BlockProto::SharedCtor(
     , decltype(_impl_.nonce_){uint64_t{0u}}
     , decltype(_impl_.timestamp_){uint64_t{0u}}
     , decltype(_impl_.reward_){0}
+    , decltype(_impl_.total_work_){uint64_t{0u}}
   };
   _impl_.previous_hash_.InitDefault();
   #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
@@ -471,6 +476,7 @@ void BlockProto::Clear() {
       reinterpret_cast<char*>(&_impl_.timestamp_) -
       reinterpret_cast<char*>(&_impl_.index_)) + sizeof(_impl_.timestamp_));
   _impl_.reward_ = 0;
+  _impl_.total_work_ = uint64_t{0u};
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
 }
@@ -682,6 +688,14 @@ const char* BlockProto::_InternalParse(const char* ptr, ::_pbi::ParseContext* ct
         } else
           goto handle_unusual;
         continue;
+      // uint64 total_work = 22;
+      case 22:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 176)) {
+          _impl_.total_work_ = ::PROTOBUF_NAMESPACE_ID::internal::ReadVarint64(&ptr);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
       default:
         goto handle_unusual;
     }  // switch
@@ -870,6 +884,12 @@ uint8_t* BlockProto::_InternalSerialize(
         21, this->_internal_epoch_proof(), target);
   }
 
+  // uint64 total_work = 22;
+  if (this->_internal_total_work() != 0) {
+    target = stream->EnsureSpace(target);
+    target = ::_pbi::WireFormatLite::WriteUInt64ToArray(22, this->_internal_total_work(), target);
+  }
+
   if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
     target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
         _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
@@ -1024,6 +1044,13 @@ size_t BlockProto::ByteSizeLong() const {
     total_size += 2 + 8;
   }
 
+  // uint64 total_work = 22;
+  if (this->_internal_total_work() != 0) {
+    total_size += 2 +
+      ::_pbi::WireFormatLite::UInt64Size(
+        this->_internal_total_work());
+  }
+
   return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
 }
 
@@ -1100,6 +1127,9 @@ void BlockProto::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PRO
   }
   if (from._internal_has_reward()) {
     _this->_internal_set_reward(from._internal_reward());
+  }
+  if (from._internal_total_work() != 0) {
+    _this->_internal_set_total_work(from._internal_total_work());
   }
   _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
 }
@@ -1180,8 +1210,8 @@ void BlockProto::InternalSwap(BlockProto* other) {
       &other->_impl_.epoch_proof_, rhs_arena
   );
   ::PROTOBUF_NAMESPACE_ID::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(BlockProto, _impl_.reward_)
-      + sizeof(BlockProto::_impl_.reward_)
+      PROTOBUF_FIELD_OFFSET(BlockProto, _impl_.total_work_)
+      + sizeof(BlockProto::_impl_.total_work_)
       - PROTOBUF_FIELD_OFFSET(BlockProto, _impl_.index_)>(
           reinterpret_cast<char*>(&_impl_.index_),
           reinterpret_cast<char*>(&other->_impl_.index_));

@@ -647,6 +647,8 @@ alyncoin::BlockProto Block::toProtobuf() const {
     if (!epochProof.empty())
         proto.set_epoch_proof(reinterpret_cast<const char*>(epochProof.data()), epochProof.size());
 
+    proto.set_total_work(accumulatedWork.convert_to<uint64_t>());
+
     std::cerr << "[toProtobuf] index=" << index << " tx_merkle_root=" << txRoot << std::endl;
     return proto;
 }
@@ -754,6 +756,7 @@ Block Block::fromProto(const alyncoin::BlockProto& protoBlock, bool allowPartial
         // ---- ONLY soft for epoch fields! ----
         newBlock.epochRoot  = optionalStr(protoBlock.epoch_root(), "epoch_root", 128);
         newBlock.epochProof = optionalBinaryField(protoBlock.epoch_proof(), "epoch_proof", 5000);
+        newBlock.accumulatedWork = protoBlock.total_work();
 
     } catch (const std::exception& ex) {
         std::cerr << "❌ [fromProto] Critical error: " << ex.what() << "\n";

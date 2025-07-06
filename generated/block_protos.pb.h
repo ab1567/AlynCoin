@@ -199,6 +199,7 @@ class BlockProto final :
     kNonceFieldNumber = 6,
     kTimestampFieldNumber = 7,
     kRewardFieldNumber = 18,
+    kTotalWorkFieldNumber = 22,
   };
   // repeated .alyncoin.TransactionProto transactions = 3;
   int transactions_size() const;
@@ -481,6 +482,15 @@ class BlockProto final :
   void _internal_set_reward(double value);
   public:
 
+  // uint64 total_work = 22;
+  void clear_total_work();
+  uint64_t total_work() const;
+  void set_total_work(uint64_t value);
+  private:
+  uint64_t _internal_total_work() const;
+  void _internal_set_total_work(uint64_t value);
+  public:
+
   // @@protoc_insertion_point(class_scope:alyncoin.BlockProto)
  private:
   class _Internal;
@@ -512,6 +522,7 @@ class BlockProto final :
     uint64_t nonce_;
     uint64_t timestamp_;
     double reward_;
+    uint64_t total_work_;
   };
   union { Impl_ _impl_; };
   friend struct ::TableStruct_block_5fprotos_2eproto;
@@ -1407,6 +1418,26 @@ inline void BlockProto::set_allocated_epoch_proof(std::string* epoch_proof) {
   }
 #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
   // @@protoc_insertion_point(field_set_allocated:alyncoin.BlockProto.epoch_proof)
+}
+
+// uint64 total_work = 22;
+inline void BlockProto::clear_total_work() {
+  _impl_.total_work_ = uint64_t{0u};
+}
+inline uint64_t BlockProto::_internal_total_work() const {
+  return _impl_.total_work_;
+}
+inline uint64_t BlockProto::total_work() const {
+  // @@protoc_insertion_point(field_get:alyncoin.BlockProto.total_work)
+  return _internal_total_work();
+}
+inline void BlockProto::_internal_set_total_work(uint64_t value) {
+  
+  _impl_.total_work_ = value;
+}
+inline void BlockProto::set_total_work(uint64_t value) {
+  _internal_set_total_work(value);
+  // @@protoc_insertion_point(field_set:alyncoin.BlockProto.total_work)
 }
 
 #ifdef __GNUC__
