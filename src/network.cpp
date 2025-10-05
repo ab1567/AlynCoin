@@ -6243,24 +6243,6 @@ void Network::handleSnapshotEnd(const std::string &peer) {
         throw std::runtime_error("Snapshot block failed PoW");
     }
 
-    std::vector<Block> rebuiltSnapshot;
-    const std::vector<Block> *blocksForApply = &snapBlocks;
-    if (lowestIndex > 0) {
-      auto localPrefix = chain.getChainUpTo(lowestIndex - 1);
-      if (static_cast<int>(localPrefix.size()) != lowestIndex)
-        throw std::runtime_error(
-            "Snapshot prefix missing locally for trimmed snapshot");
-      if (snapBlocks.front().getPreviousHash() != localPrefix.back().getHash())
-        throw std::runtime_error(
-            "Trimmed snapshot does not connect to local prefix");
-      rebuiltSnapshot.reserve(localPrefix.size() + snapBlocks.size());
-      rebuiltSnapshot.insert(rebuiltSnapshot.end(), localPrefix.begin(),
-                             localPrefix.end());
-      rebuiltSnapshot.insert(rebuiltSnapshot.end(), snapBlocks.begin(),
-                             snapBlocks.end());
-      blocksForApply = &rebuiltSnapshot;
-    }
-
     // --- Quick path: height == localHeight + 1 -> treat as tail push
     int localHeight = chain.getHeight();
     if (snap.height() == localHeight + 1 && snapBlocks.size() == 1) {
@@ -6303,7 +6285,7 @@ void Network::handleSnapshotEnd(const std::string &peer) {
 
     // --- Fork choice: strict cumulative work rule ---
     auto localWork = chain.computeCumulativeDifficulty(chain.getChain());
-    auto remoteWork = chain.computeCumulativeDifficulty(*blocksForApply);
+    auto remoteWork = chain.computeCumulativeDifficulty(snapBlocks);
     uint64_t localW64 = safeUint64(localWork);
     uint64_t remoteW64 = safeUint64(remoteWork);
     std::string localTipHash = chain.getLatestBlockHash();
@@ -6331,8 +6313,7 @@ void Network::handleSnapshotEnd(const std::string &peer) {
     }
 
     // Actually apply: truncate and replace local chain
-    if (!chain.replaceChainUpTo(*blocksForApply, snap.height()))
-      throw std::runtime_error("Snapshot apply rejected by blockchain layer");
+    chain.replaceChainUpTo(snapBlocks, snap.height());
 
     std::cout << "✅ [SNAPSHOT] Applied snapshot from peer " << peer
               << " at height " << snap.height() << "\n";
