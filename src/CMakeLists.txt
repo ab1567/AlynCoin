@@ -524,9 +524,6 @@ target_link_libraries(devfund_cli PRIVATE alyncoin_lib ${PLAT_LIBS})
 # Atomic Swap CLI
 add_executable(swapcli
   ${SOURCE_DIR}/atomic_swaps/swapcli.cpp
-  ${SOURCE_DIR}/atomic_swaps/swap_manager.cpp
-  ${SOURCE_DIR}/atomic_swaps/rocksdb_swap_store.cpp
-  ${SOURCE_DIR}/atomic_swaps/proto_utils.cpp
 )
 add_dependencies(swapcli winterfell_ffi)
 target_link_libraries(swapcli
@@ -543,9 +540,6 @@ target_link_libraries(swapcli
 # Identity CLI
 add_executable(identitycli
   ${SOURCE_DIR}/identity/identitycli.cpp
-  ${SOURCE_DIR}/identity/identity.cpp
-  ${SOURCE_DIR}/identity/identity_store.cpp
-  ${SOURCE_DIR}/identity/proto_utils.cpp
 )
 add_dependencies(identitycli winterfell_ffi)
 target_link_libraries(identitycli
@@ -563,9 +557,6 @@ target_link_libraries(identitycli
 add_executable(nftcli
   ${SOURCE_DIR}/nft/main.cpp
   ${SOURCE_DIR}/nft/nft_cli.cpp
-  ${SOURCE_DIR}/nft/nft.cpp
-  ${SOURCE_DIR}/nft/nft_storage.cpp
-  ${SOURCE_DIR}/nft/crypto/aes_utils.cpp
 )
 add_dependencies(nftcli winterfell_ffi)
 target_link_libraries(nftcli
@@ -634,3 +625,4 @@ set_target_properties(alyncoin alyncoin-cli explorer_server metrics_server peer_
 )
 
 message(STATUS "AlynCoin configured: static deps and cross-platform build ready.")
+
