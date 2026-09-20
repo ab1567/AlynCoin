@@ -90,11 +90,8 @@ public:
   void start();
   void connectToPeer(const std::string &host, short port);
   void broadcastTransaction(const Transaction &tx);
-  void broadcastTransactionToAllExcept(const Transaction &tx,
-                                       const std::string &excludePeer);
-  void broadcastBlock(const Block &block, bool force = false,
+  void broadcastBlock(const Block &block,
                       const std::string &excludePeer = "");
-  void broadcastBlocks(const std::vector<Block> &blocks);
   void broadcastINV(const std::vector<std::string> &hashes);
   void broadcastHeight(uint32_t height);
   void broadcastHandshake();

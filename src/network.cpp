@@ -32,7 +32,6 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/multiprecision/cpp_int.hpp>
 #include <condition_variable>
-#include <random>
 #include <queue>
 #include <deque>
 #include <cctype>
@@ -2704,33 +2703,6 @@ void Network::broadcastTransaction(const Transaction &tx) {
   }
 }
 
-// Broadcast transaction to all peers except sender (to prevent echo storms)
-void Network::broadcastTransactionToAllExcept(const Transaction &tx,
-                                              const std::string &excludePeer) {
-  alyncoin::TransactionProto proto = tx.toProto();
-  alyncoin::net::Frame fr;
-  *fr.mutable_tx_broadcast()->mutable_tx() = proto;
-  std::vector<std::pair<std::string, std::shared_ptr<Transport>>> targets;
-  {
-    std::lock_guard<std::timed_mutex> lk(peersMutex);
-    for (const auto &kv : peerTransports) {
-      if (kv.first == excludePeer)
-        continue;
-      if (kv.second.tx && kv.second.tx->isOpen())
-        targets.emplace_back(kv.first, kv.second.tx);
-    }
-  }
-
-  for (const auto &kv : targets) {
-    if (peerSupportsWhisper(kv.first))
-      sendPrivate(kv.first, fr);
-    else {
-      std::this_thread::sleep_for(randomBroadcastDelay());
-      sendFrame(kv.second, fr);
-    }
-  }
-}
-
 // ✅ New smart sync method
 void Network::intelligentSync() {
   static std::atomic<int64_t> lastRunMs{0};
@@ -4354,7 +4326,7 @@ void Network::sendStateProof(std::shared_ptr<Transport> tr) {
 // ✅ **Handle Incoming Data with Protobuf Validation**
 
 // ✅ **Broadcast a mined block to all peers*
-void Network::broadcastBlock(const Block &block, bool /*force*/,
+void Network::broadcastBlock(const Block &block,
                              const std::string &excludePeer) {
   {
     std::lock_guard<std::mutex> lk(seenBlockMutex);
@@ -4362,7 +4334,7 @@ void Network::broadcastBlock(const Block &block, bool /*force*/,
       return;
     seenBlockHashes.insert(block.getHash());
   }
-  // Serialize to protobuf and then base64
+  // Validate the protobuf payload before broadcasting.
   alyncoin::BlockProto proto = block.toProtobuf();
   std::string raw;
   if (!proto.SerializeToString(&raw) || raw.empty()) {
@@ -4427,40 +4399,17 @@ void Network::broadcastBlock(const Block &block, bool /*force*/,
   }
 }
 
-// Broadcast a batch of blocks (legacy path removed)
-void Network::broadcastBlocks(const std::vector<Block> &blocks) {
-  if (blocks.empty())
-    return;
-  for (const auto &b : blocks)
-    broadcastBlock(b);
-}
-
 void Network::broadcastINV(const std::vector<std::string> &hashes) {
   if (hashes.empty())
     return;
-  std::unordered_map<std::string, PeerEntry> peersCopy;
-  {
-    std::lock_guard<std::timed_mutex> lk(peersMutex);
-    peersCopy = peerTransports;
-  }
   alyncoin::net::Frame fr;
   auto *inv = fr.mutable_inv();
   for (const auto &h : hashes)
     inv->add_hashes(h);
-  for (auto &kv : peersCopy) {
-    auto tr = kv.second.tx;
-    if (!tr || !tr->isOpen())
-      continue;
-    sendFrame(tr, fr);
-  }
+  broadcastFrame(fr);
 }
 
 void Network::broadcastHeight(uint32_t height) {
-  std::unordered_map<std::string, PeerEntry> peersCopy;
-  {
-    std::lock_guard<std::timed_mutex> lk(peersMutex);
-    peersCopy = peerTransports;
-  }
   alyncoin::net::Frame fr;
   Blockchain &bc = Blockchain::getInstance();
   auto *hr = fr.mutable_height_res();
@@ -4470,32 +4419,13 @@ void Network::broadcastHeight(uint32_t height) {
   if (peerManager)
     peerManager->setLocalWork(w64);
   hr->set_total_work(w64);
-  for (auto &kv : peersCopy) {
-    auto tr = kv.second.tx;
-    if (!tr || !tr->isOpen())
-      continue;
-    sendFrame(tr, fr);
-  }
+  broadcastFrame(fr);
 }
 
 void Network::broadcastHandshake() {
-  std::unordered_map<std::string, PeerEntry> peersCopy;
-  {
-    std::lock_guard<std::timed_mutex> lk(peersMutex);
-    peersCopy = peerTransports;
-  }
-
-  alyncoin::net::Handshake hs = buildHandshake();
-
   alyncoin::net::Frame fr;
-  *fr.mutable_handshake() = hs;
-
-  for (auto &kv : peersCopy) {
-    auto tr = kv.second.tx;
-    if (!tr || !tr->isOpen())
-      continue;
-    sendFrame(tr, fr);
-  }
+  *fr.mutable_handshake() = buildHandshake();
+  broadcastFrame(fr);
 }
 
 void Network::sendBlockToPeer(const std::string &peer, const Block &blk) {
@@ -4967,7 +4897,7 @@ void Network::handleNewBlock(const Block &newBlock, const std::string &sender) {
       }
 
       onBlockAccepted(newBlock.getHash());
-      broadcastBlock(newBlock, false, sender);
+      broadcastBlock(newBlock, sender);
       if (peerManager && !sender.empty()) {
         peerManager->setPeerHeight(sender, newBlock.getIndex());
         peerManager->setPeerTipHash(sender, newBlock.getHash());
@@ -5053,7 +4983,7 @@ void Network::handleNewBlock(const Block &newBlock, const std::string &sender) {
       return;
     }
 
-    broadcastBlock(newBlock, false, sender);
+    broadcastBlock(newBlock, sender);
     // Update cached height and tip hash for the sending peer if provided
     if (peerManager && !sender.empty()) {
       peerManager->setPeerHeight(sender, newBlock.getIndex());
@@ -7616,37 +7546,24 @@ bool Network::validateBlockSignatures(const Block &blk) {
 }
 //
 void Network::broadcastRollupBlock(const RollupBlock &rollup) {
-  ScopedLockTracer tracer("broadcastRollupBlock");
-  std::lock_guard<std::timed_mutex> lock(peersMutex);
-  for (const auto &[peerID, entry] : peerTransports) {
-    auto transport = entry.tx;
-    if (transport && transport->isOpen()) {
-      alyncoin::net::Frame fr;
-      fr.mutable_rollup_block()->set_data(rollup.serialize());
-      sendFrame(transport, fr);
-    }
-  }
+  alyncoin::net::Frame fr;
+  fr.mutable_rollup_block()->set_data(rollup.serialize());
+  broadcastFrame(fr);
 }
-//
+
 void Network::broadcastEpochProof(int epochIdx, const std::string &rootHash,
                                   const std::vector<uint8_t> &proofBytes) {
-  ScopedLockTracer tracer("broadcastEpochProof");
-  std::lock_guard<std::timed_mutex> lock(peersMutex);
-  for (const auto &[peerID, entry] : peerTransports) {
-    auto transport = entry.tx;
-    if (transport && transport->isOpen()) {
-      alyncoin::net::Frame fr;
-      std::string blob;
-      blob.reserve(sizeof(int) + rootHash.size() + proofBytes.size());
-      blob.append(reinterpret_cast<const char *>(&epochIdx), sizeof(int));
-      blob.append(rootHash);
-      blob.append(proofBytes.begin(), proofBytes.end());
-      fr.mutable_agg_proof()->set_data(blob);
-      sendFrame(transport, fr);
-    }
-  }
+  std::string blob;
+  blob.reserve(sizeof(int) + rootHash.size() + proofBytes.size());
+  blob.append(reinterpret_cast<const char *>(&epochIdx), sizeof(int));
+  blob.append(rootHash);
+  blob.append(proofBytes.begin(), proofBytes.end());
+
+  alyncoin::net::Frame fr;
+  fr.mutable_agg_proof()->set_data(blob);
+  broadcastFrame(fr);
 }
-//
+
 bool Network::peerSupportsAggProof(const std::string &peerId) const {
   if (auto snapshot = getPeerSnapshot(peerId); snapshot.state)
     return snapshot.state->supportsAggProof;

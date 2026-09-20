@@ -1,7 +1,6 @@
 #include <generated/transaction_protos.pb.h>
 #include "transaction.h"
 #include "../network/peer_blacklist.h"
-#include "base64.h"
 #include "db/db_paths.h"
 #include "crypto_utils.h"
 #include "hash.h"

@@ -1165,62 +1165,12 @@ void Blockchain::clearPendingTransactions() {
   }
 }
 //
-bool Blockchain::hasBlock(const std::string &hash) const {
-  for (const Block &blk : chain) {
-    if (blk.getHash() == hash) {
-      return true;
-    }
-  }
-  return false;
-}
-
 // ✅ Helper function to check if a file exists
 bool fileExists(const std::string &filename) {
   struct stat buffer;
   return (stat(filename.c_str(), &buffer) == 0);
 }
 //
-void Blockchain::mergeWith(const Blockchain &other) {
-  if (other.chain.size() <= chain.size()) {
-    std::cerr << "⚠️ Merge skipped: Local chain is longer or equal.\n";
-    return;
-  }
-
-  std::vector<Block> newChain;
-  for (size_t i = 0; i < other.chain.size(); ++i) {
-    const Block &block = other.chain[i];
-
-    std::string expectedPrevHash =
-        (i == 0) ? std::string{GENESIS_PARENT_HASH} : newChain.back().getHash();
-
-    if (block.getPreviousHash() != expectedPrevHash) {
-      std::cerr << "❌ [ERROR] Invalid previous hash at block index "
-                << block.getIndex() << ". Expected: " << expectedPrevHash
-                << ", Got: " << block.getPreviousHash() << "\n";
-      return;
-    }
-
-    // if (block.getHash() != block.calculateHash()) {
-    //   std::cerr << "❌ [ERROR] Block hash mismatch at index " <<
-    //   block.getIndex() << "\n";
-    // return;
-    //}
-
-    // ✅ Skip static difficulty validation (LWMA adjusts on mining only)
-    newChain.push_back(block);
-  }
-
-  if (newChain.size() > chain.size()) {
-    std::cout << "✅ Replacing current blockchain with a longer valid chain!\n";
-    chain = newChain;
-    refreshRewardFromTip();
-    adjustDifficulty();
-    saveToDB();
-  } else {
-    std::cerr << "⚠️ New chain was not longer. Keeping existing chain.\n";
-  }
-}
-
 void Blockchain::noteNewL1(std::time_t timestamp) {
   if (timestamp <= 0) {
     timestamp = std::time(nullptr);
@@ -3827,22 +3777,6 @@ double Blockchain::getAverageDifficulty(int recentCount) const {
   return (count > 0) ? totalDiff / count : difficulty;
 }
 
-int Blockchain::getUniqueMinerCount(int recentCount) const {
-  if (chain.empty())
-    return 1;
-
-  int start = std::max(0, static_cast<int>(chain.size()) - recentCount);
-  std::unordered_set<std::string> miners;
-
-  for (int i = start; i < static_cast<int>(chain.size()); ++i) {
-    const std::string &addr = chain[i].getMinerAddress();
-    if (!addr.empty())
-      miners.insert(addr);
-  }
-
-  return std::max(1, static_cast<int>(miners.size()));
-}
-
 // calculate balance
 double Blockchain::calculateBalance(
     const std::string &address,
@@ -4446,24 +4380,6 @@ std::vector<Block> Blockchain::getChainSlice(size_t startHeight,
 }
 
 //
-bool Blockchain::tryAppendBlock(const Block &blk) {
-  std::unique_lock<std::recursive_mutex> lk(blockchainMutex);
-
-  if (blk.getIndex() != static_cast<int>(chain.size()))
-    return false;
-
-  if (!chain.empty() && blk.getPreviousHash() != chain.back().getHash())
-    return false;
-
-  Block blkCopy = blk;
-  cpp_int thisWork = difficultyToWork(blk.getDifficulty());
-  cpp_int parentWork =
-      chain.empty() ? cpp_int(0) : chain.back().getAccumulatedWork();
-  blkCopy.setAccumulatedWork(parentWork + thisWork);
-  chain.push_back(blkCopy);
-
-  return true;
-}
 // ✅ Compare incoming chain and merge if better
 void Blockchain::compareAndMergeChains(const std::vector<Block> &otherChain) {
   std::cout << "🔎 [Fork] Comparing chains: local=" << chain.size()

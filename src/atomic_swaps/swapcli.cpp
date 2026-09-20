@@ -22,17 +22,6 @@ std::map<std::string, std::string> parseArgs(int argc, char* argv[]) {
     }
     return args;
 }
-//-------
-std::string stateToStr(SwapState s) {
-    switch (s) {
-        case SwapState::INITIATED: return "INITIATED";
-        case SwapState::REDEEMED: return "REDEEMED";
-        case SwapState::REFUNDED: return "REFUNDED";
-        case SwapState::EXPIRED: return "EXPIRED";
-        case SwapState::INVALID: return "INVALID";
-    }
-    return "UNKNOWN";
-}
 
 // -------------------- Print Functions --------------------
 void printSwap(const AtomicSwap &swap) {
