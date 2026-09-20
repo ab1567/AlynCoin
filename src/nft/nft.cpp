@@ -22,12 +22,6 @@
 #endif
 
 using json = nlohmann::json;
-// 🔧 Helper: build zk-STARK seed for NFTs
-std::string buildZkStarkSeed(const NFT& nft) {
-    std::ostringstream oss;
-    oss << nft.creator << nft.owner << nft.metadata << nft.imageHash << nft.timestamp;
-    return oss.str();
-}
 
 // ✅ Signature Verification (Falcon + optional Dilithium)
 bool NFT::verifySignature() const {

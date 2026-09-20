@@ -155,7 +155,6 @@ public:
   void loadFromPeers();
   void reloadBlockchainState();
   void recalculateBalancesFromChain();
-  void mergeWith(const Blockchain &other);
   void updateFromJSON(const std::string &jsonData);
   void clearPendingTransactions();
   void printPendingTransactions();
@@ -189,7 +188,6 @@ public:
   int findCommonAncestorIndex(const std::vector<Block>& otherChain);
   bool rollbackToIndex(int index);
   bool forceAddBlock(const Block &block);
-  bool hasBlock(const std::string &hash) const;
   void applyVestingSchedule();
   void startMining(const std::string &minerAddress,
                    const std::string &minerDilithiumKey,
@@ -206,7 +204,6 @@ public:
   void setPendingTransactions(const std::vector<Transaction> &transactions);
   double getAverageBlockTime(int recentCount) const;
   double getAverageDifficulty(int recentCount) const;
-  int getUniqueMinerCount(int recentCount) const;
   enum class ValidationResult {
     Ok = 0,
     PrevHashMismatch,
@@ -358,7 +355,6 @@ public:
   // --- Snapshot/fast sync helpers ---
   std::vector<Block> getChainUpTo(size_t height) const;
   std::vector<Block> getChainSlice(size_t startHeight, size_t endHeight) const;
-  bool tryAppendBlock(const Block &blk);
 
 };
 

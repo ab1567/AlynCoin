@@ -1,3 +1,4 @@
+#include "cli/peer_connection.h"
 #include "blockchain.h"
 #include "cli/peer_blacklist_cli.h"
 #include "crypto_utils.h"
@@ -9,13 +10,8 @@
 #include <json/json.h>
 #include <limits>
 #include <string>
-#include <filesystem>
-#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <mutex>
-#include <thread>
-#include <memory>
 #include "db/db_paths.h"
 #include "governance/dao.h"
 #include "governance/devfund.h"
@@ -28,79 +24,6 @@
 
 #include <unordered_set>
 static std::unordered_set<std::string> cliSeenTxHashes;
-
-namespace {
-
-std::mutex gCliOutputMutex;
-
-enum class ConnectOutcome { Success, Failure, Pending };
-
-ConnectOutcome connectPeerWithFeedback(Network &network, const std::string &ip,
-                                      int port,
-                                      std::chrono::milliseconds waitFor,
-                                      bool allowBackground) {
-    struct ConnectState {
-        std::mutex mutex;
-        std::condition_variable cv;
-        bool finished = false;
-        bool success = false;
-        std::atomic<bool> backgroundAnnounce{false};
-    };
-
-    auto state = std::make_shared<ConnectState>();
-
-    auto worker = std::thread([&network, ip, port, allowBackground, state]() {
-        bool ok = network.connectToNode(ip, port);
-        {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            state->finished = true;
-            state->success = ok;
-        }
-        state->cv.notify_one();
-        if (allowBackground && state->backgroundAnnounce.load()) {
-            std::lock_guard<std::mutex> outLock(gCliOutputMutex);
-            if (ok) {
-                std::cout << "✅ Connected to peer " << ip << ':' << port
-                          << std::endl;
-            } else {
-                std::cout << "❌ Could not connect to peer: " << ip << ':'
-                          << port << std::endl;
-            }
-        }
-    });
-
-    std::unique_lock<std::mutex> lock(state->mutex);
-    if (waitFor.count() > 0) {
-        if (!state->cv.wait_for(lock, waitFor,
-                                [&]() { return state->finished; })) {
-            if (allowBackground) {
-                state->backgroundAnnounce.store(true);
-                lock.unlock();
-                worker.detach();
-                return ConnectOutcome::Pending;
-            }
-        }
-    }
-
-    if (!state->finished) {
-        state->cv.wait(lock, [&]() { return state->finished; });
-    }
-    lock.unlock();
-
-    if (worker.joinable())
-        worker.join();
-
-    return state->success ? ConnectOutcome::Success : ConnectOutcome::Failure;
-}
-
-} // namespace
-
-std::string getCurrentWallet() {
-    std::ifstream in(DBPaths::getHomePath() + "/.alyncoin/current_wallet.txt");
-    std::string addr;
-    std::getline(in, addr);
-    return addr;
-}
 
 void printMenu() {
   std::cout << "\n=== AlynCoin Wallet CLI ===\n";
@@ -892,13 +815,13 @@ if (argc >= 3 && std::string(argv[1]) == "recursive-rollup") {
         if (!Network::isUninitialized()) {
             Network& net = Network::getInstance();
             {
-                std::lock_guard<std::mutex> lock(gCliOutputMutex);
+                std::lock_guard<std::mutex> lock(alyn::cli::outputMutex);
                 std::cout << "🔌 Attempting to connect to peer " << cmd << "..."
                           << std::endl;
             }
-            auto outcome = connectPeerWithFeedback(
+            auto outcome = alyn::cli::connectPeerWithFeedback(
                 net, ip, port, std::chrono::milliseconds(0), false);
-            if (outcome == ConnectOutcome::Success) {
+            if (outcome == alyn::cli::ConnectOutcome::Success) {
                 std::cout << "✅ Connected to peer " << cmd << "\n";
             } else {
                 std::cerr << "❌ Could not connect to peer: " << cmd << "\n";
@@ -962,15 +885,15 @@ int cliMain(int argc, char *argv[]) {
       std::string ip = connectPeer.substr(0, colonPos);
       int peerPort = std::stoi(connectPeer.substr(colonPos + 1));
       {
-        std::lock_guard<std::mutex> lock(gCliOutputMutex);
+        std::lock_guard<std::mutex> lock(alyn::cli::outputMutex);
         std::cout << "🔌 Attempting to connect to peer " << connectPeer
                   << "..." << std::endl;
       }
-      auto outcome = connectPeerWithFeedback(
+      auto outcome = alyn::cli::connectPeerWithFeedback(
           *network, ip, peerPort, std::chrono::seconds(3), true);
-      if (outcome == ConnectOutcome::Success) {
+      if (outcome == alyn::cli::ConnectOutcome::Success) {
         std::cout << "✅ Connected to AlynCoin Node at " << connectPeer << "\n";
-      } else if (outcome == ConnectOutcome::Failure) {
+      } else if (outcome == alyn::cli::ConnectOutcome::Failure) {
         std::cerr << "❌ Failed to connect to AlynCoin node at " << connectPeer
                   << "\n";
       } else {

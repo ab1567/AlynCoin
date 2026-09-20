@@ -62,15 +62,6 @@ bool waitForCatchup(Blockchain &blockchain, PeerManager *pm, Network *net,
 
 } // namespace
 
-bool containsValidTransaction(const std::vector<Transaction> &transactions) {
-    for (const auto &tx : transactions) {
-        if (tx.getSender() != "System") {
-            return true;
-        }
-    }
-    return false;
-}
-
 void Miner::startMiningProcess(const std::string &minerAddress) {
     try {
         std::cout << "🚀 Starting mining process for: " << minerAddress << std::endl;
