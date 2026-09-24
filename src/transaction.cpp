@@ -365,20 +365,6 @@ std::string Transaction::toString() const {
 }
 
 //
-std::string Transaction::hashLegacy() const {
-  Json::Value txJson;
-  txJson["sender"] = sender;
-  txJson["recipient"] = recipient;
-  txJson["amount"] = amount;
-  txJson["timestamp"] = static_cast<Json::Int64>(timestamp);
-
-  Json::StreamWriterBuilder writer;
-  writer["indentation"] = ""; // No indentation → deterministic
-  std::string jsonString = Json::writeString(writer, txJson);
-
-  return Crypto::hybridHash(jsonString);
-}
-//
 alyncoin::TransactionProto Transaction::toProto() const {
     alyncoin::TransactionProto proto;
 
@@ -389,16 +375,16 @@ alyncoin::TransactionProto Transaction::toProto() const {
     proto.set_hash(hash);
     proto.set_nonce(nonce);
 
-    if (sender == "System") {
-        // Dev-fund or reward tx: skip keys/signatures
-        if (metadata.size() > 16384) {
-            std::cerr << "⚠️ [toProto] metadata too large (" << metadata.size() << " bytes). Truncating.\n";
-            proto.set_metadata(metadata.substr(0, 16384));
-        } else {
-            proto.set_metadata(metadata);
-        }
-        return proto;
+    if (metadata.size() > 16384) {
+        std::cerr << "⚠️ [toProto] metadata too large (" << metadata.size() << " bytes). Truncating.\n";
+        proto.set_metadata(metadata.substr(0, 16384));
+    } else {
+        proto.set_metadata(metadata);
     }
+
+    // Dev-fund and reward transactions omit keys, signatures and proofs.
+    if (sender == "System")
+        return proto;
 
     // 🚨 No hex! Store as raw binary:
     if (!signatureDilithium.empty()) {
@@ -417,13 +403,6 @@ alyncoin::TransactionProto Transaction::toProto() const {
     // zkProof is raw binary
     if (!zkProof.empty()) {
         proto.set_zkproof(zkProof);
-    }
-
-    if (metadata.size() > 16384) {
-        std::cerr << "⚠️ [toProto] metadata too large (" << metadata.size() << " bytes). Truncating.\n";
-        proto.set_metadata(metadata.substr(0, 16384));
-    } else {
-        proto.set_metadata(metadata);
     }
 
     return proto;
@@ -585,11 +564,6 @@ bool Transaction::isValid(const std::string &senderPublicKeyDilithium,
     return true;
 }
 
-//
-std::string Transaction::getSignature() const {
-  return signatureDilithium + "|" + signatureFalcon;
-}
-
 // 🔥 Smart Burn Mechanism – Adjust Burn Rate Dynamically
 const double MAX_BURN_RATE = 0.05;
 const double MIN_BURN_RATE = 0.01;
@@ -602,17 +576,6 @@ double Transaction::calculateBurnRate(int recentTxCount) {
 
 double Transaction::computeBurnedAmount(double amount, int recentTxCount) {
     return amount * calculateBurnRate(recentTxCount);
-}
-
-// ✅ Improved Smart Burn Mechanism with Debugging
-void Transaction::applyBurn(std::string &sender, double &amount,
-                            int recentTxCount) {
-  double burnRate = calculateBurnRate(recentTxCount);
-  double burnAmount = computeBurnedAmount(amount, recentTxCount);
-  amount -= burnAmount;
-
-  std::cout << "🔥 Smart Burn Applied: " << burnAmount << " AlynCoin ("
-            << (burnRate * 100) << "%)" << std::endl;
 }
 
 // ✅ Load Only Confirmed Transactions from RocksDB

@@ -4,7 +4,6 @@
 #include "self_healing/health_monitor.h"
 #include "self_healing/sync_recovery.h"
 #include <memory>
-#include <chrono>
 #include <cstddef>
 
 class Blockchain;
@@ -19,16 +18,10 @@ public:
     // Periodic checks hooked into Network timers
     void checkPeerHeights();
     void kickStalledSync();
-    void rescanDB();
 
     // Legacy wrappers (compat with CLI / tests)
     void monitorAndHeal();
     NodeHealthStatus manualHeal();
-    void runPeriodicCheck(std::chrono::seconds interval);
-
-    // --- future health modules (stubs) ---------------------------------
-    void checkIdentityService();
-    void checkSwapLiquidity();
 
 private:
     std::unique_ptr<HealthMonitor> healthMonitor_;

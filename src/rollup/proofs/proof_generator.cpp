@@ -7,12 +7,6 @@
 #include <thread>
 #include <iostream>
 
-std::string ProofGenerator::generatePublicInput(const std::string& txRoot,
-                                                const std::string& stateRootBefore,
-                                                const std::string& stateRootAfter) {
-    return Crypto::hybridHashWithDomain(txRoot + stateRootBefore + stateRootAfter, "PublicInput");
-}
-
 std::string ProofGenerator::generateAggregatedProof(const std::vector<Transaction>& transactions,
                                                     const std::unordered_map<std::string, double>& stateBefore,
                                                     const std::unordered_map<std::string, double>& stateAfter,

@@ -29,11 +29,8 @@ public:
   uint64_t getNonce() const;
   std::string getTransactionHash() const;
   std::string getZkProof() const;
-  [[deprecated("use getTransactionHash")]]
-  std::string hashLegacy() const;
   std::string toString() const;
   std::string getHash() const;
-  std::string getSignature() const;
   std::string getSenderPublicKeyDilithium() const {
     return senderPublicKeyDilithium;
   }
@@ -72,7 +69,6 @@ public:
   // Burn
   static double calculateBurnRate(int recentTxCount);
   static double computeBurnedAmount(double amount, int recentTxCount);
-  void applyBurn(std::string &sender, double &amount, int recentTxCount);
   static Transaction createSystemRewardTransaction(
     const std::string &recipient,
     double amount,

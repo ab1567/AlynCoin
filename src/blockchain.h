@@ -149,7 +149,6 @@ public:
 
   // Blockchain Operations
   void adjustDifficulty();
-  void syncChain(const Json::Value &jsonData);
   bool saveToDB(bool forceFullSave = false);
   bool loadFromDB();
   void loadFromPeers();
@@ -165,7 +164,6 @@ public:
   bool exportGenesisBlock(const std::string &path) const;
   bool importGenesisBlock(const std::string &path);
   bool deserializeBlockchain(const std::string &data);
-  bool serializeBlockchain(std::string &outData) const;
   void fromJSON(const Json::Value &root);
   void addTransaction(const Transaction &tx);
   void setAutoMiningRewardMode(bool enabled);
@@ -176,16 +174,12 @@ public:
                                              const std::vector<unsigned char> &message);
   void clear(bool force = false);
   void validateChainContinuity() const;
-  double calculateBlockReward();
-  std::string computeEpochRoot(size_t endIndex) const;
   std::string getLatestBlockHash() const;
   std::vector<Block> getAllBlocks();
   Block mineBlock(const std::string &minerAddress);
   const std::string &getLastMiningError() const { return lastMiningError_; }
-  bool deserializeBlockchainBase64(const std::string &base64Data);
   bool loadFromProto(const alyncoin::BlockchainProto &protoChain);
   bool hasBlockHash(const std::string &hash) const;
-  int findCommonAncestorIndex(const std::vector<Block>& otherChain);
   bool rollbackToIndex(int index);
   bool forceAddBlock(const Block &block);
   void applyVestingSchedule();
@@ -202,7 +196,6 @@ public:
                                 bool forceAutoReward = false,
                                 std::string *errorOut = nullptr);
   void setPendingTransactions(const std::vector<Transaction> &transactions);
-  double getAverageBlockTime(int recentCount) const;
   double getAverageDifficulty(int recentCount) const;
   enum class ValidationResult {
     Ok = 0,
@@ -233,11 +226,7 @@ public:
   void printBlockchain() const;
   void requestFullSync();
   bool processStateChannelCommitment(const StateChannel &channel);
-  std::vector<Transaction> aggregateOffChainTxs(const std::vector<Transaction> &offChainTxs);
-  RollupBlock createRollupBlock(const std::vector<Transaction> &offChainTxs);
   void saveRollupChain() const;
-  void loadRollupChain();
-  void mergeRollupChain(const std::vector<RollupBlock> &otherChain);
     double getTotalBurnedSupply() const { return totalBurnedSupply; }
     double getTotalSupply() const;
     double getBlockReward() const { return blockReward; }
@@ -274,7 +263,6 @@ public:
   int getBlockCount() const { return static_cast<int>(chain.size()); }
   void addVestingForEarlySupporter(const std::string &address, double initialAmount);
   bool castVote(const std::string &voterAddress, const std::string &candidateAddress);
-  std::vector<Transaction> getAllTransactionsForAddress(const std::string& address);
   bool openDB(bool readOnly = false);
   void closeDB();
   rocksdb::DB* getRawDB();

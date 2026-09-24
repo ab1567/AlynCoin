@@ -107,10 +107,6 @@ Block::Block(int index, const std::string &previousHash,
 }
 
 //
-void Block::computeKeccakHash() {
-  keccakHash = Crypto::keccak256(hash); // ✅ Use Keccak hashing function
-}
-//
 std::vector<unsigned char> Block::getSignatureMessage() const {
   std::vector<unsigned char> msg;
 

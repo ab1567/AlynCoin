@@ -3,8 +3,6 @@
 #include "sync_recovery.h"
 #include "logger.h"
 #include "network.h"
-#include <thread>
-#include <chrono>
 #include <vector>
 
 SelfHealingNode::SelfHealingNode(Blockchain* blockchain, PeerManager* peerManager)
@@ -162,16 +160,6 @@ void SelfHealingNode::kickStalledSync() {
     }
 }
 
-void SelfHealingNode::rescanDB() {
-    Logger::info("[SelfHealer] Rescanning blockchain DB...");
-    blockchain_->reloadBlockchainState();
-    blockchain_->validateChainContinuity();
-}
-
-void SelfHealingNode::checkIdentityService() {}
-
-void SelfHealingNode::checkSwapLiquidity() {}
-
 // ---------------------------------------------------------------------
 // Legacy wrappers used by older CLI paths
 void SelfHealingNode::monitorAndHeal() {
@@ -180,11 +168,4 @@ void SelfHealingNode::monitorAndHeal() {
 
 NodeHealthStatus SelfHealingNode::manualHeal() {
     return runHealthCheck(true);
-}
-
-void SelfHealingNode::runPeriodicCheck(std::chrono::seconds interval) {
-    while (true) {
-        checkPeerHeights();
-        std::this_thread::sleep_for(interval);
-    }
 }

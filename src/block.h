@@ -119,7 +119,6 @@ public:
   bool mineBlock(int difficulty);
   void signBlock(const std::string &minerPrivateKeyPath);
   bool hasValidProofOfWork() const;
-  void computeKeccakHash();
   bool isValid(const std::string &prevHash, int expectedDifficulty,
                bool forceFullValidation = true) const;
   bool containsTransaction(const Transaction &tx) const;

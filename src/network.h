@@ -108,7 +108,6 @@ public:
   void scanForPeers();
   void startServer();
   void sendLatestBlock(const std::string &peerIP);
-  void handleReceivedBlockIndex(const std::string &peerIP, int peerBlockIndex);
   void loadPeers();
   void savePeers();
   void addPeer(const std::string &peer);
@@ -130,7 +129,6 @@ public:
                            const std::vector<uint8_t> &proof);
   void requestEpochHeaders(const std::string &peerId);
   void handleNewRollupBlock(const RollupBlock &newRollupBlock);
-  void receiveRollupBlock(const std::string &data);
   void listenForConnections();
   // Handle a new block received from a peer or mined locally.
   // The optional sender argument is the peer ID that relayed the block.
@@ -156,13 +154,10 @@ public:
     std::shared_ptr<PeerState> state;
   };
   PeerSnapshot getPeerSnapshot(const std::string &peer) const;
-  void waitForInitialSync(int timeoutSeconds = 10);
   void handleGetData(const std::string &peer,
                      const std::vector<std::string> &hashes);
-  void sendStateProof(std::shared_ptr<Transport> tr);
   bool peerSupportsSnapshot(const std::string &peerId) const;
   bool peerSupportsWhisper(const std::string &peerId) const;
-  bool peerSupportsTls(const std::string &peerId) const;
   void requestSnapshotSync(const std::string &peer);
   void resetSnapshotState();
   void requestTailBlocks(const std::string &peer, int fromHeight,
@@ -183,8 +178,6 @@ public:
                          const alyncoin::net::SnapshotEnd &end);
   void handleTailRequest(const std::string &peer, int fromHeight);
   void handleTailBlocks(const std::string &peer, const std::string &b64);
-  void handleHeaderBatch(const std::string &peer,
-                         const alyncoin::net::Headers &headers);
   void handleBlockBatch(const std::string &peer,
                         const alyncoin::net::BlockBatch &batch);
   void handleBlockchainSyncRequest(const std::string &peer,
@@ -327,7 +320,6 @@ private:
   void dispatch(const alyncoin::net::Frame &f, const std::string &peerId);
   bool sendInitialRequests(const std::string &peerId);
   void handlePeer(std::shared_ptr<Transport> transport);
-  bool validateBlockSignatures(const Block &blk);
   void penalizePeer(const std::string &peer, int points);
   bool ensureEndpointCapacityLocked(bool incomingVerified);
   std::pair<std::string, unsigned short> determineAnnounceEndpoint() const;

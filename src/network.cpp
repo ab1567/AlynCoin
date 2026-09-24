@@ -4099,23 +4099,6 @@ void Network::autoSyncIfBehind() {
   }
 
 }
-void Network::waitForInitialSync(int timeoutSeconds) {
-  auto start = std::chrono::steady_clock::now();
-  while (true) {
-    size_t localHeight = blockchain->getHeight();
-    int networkHeight = peerManager ? peerManager->getMedianNetworkHeight() : 0;
-    if (networkHeight > 0 &&
-        localHeight >= static_cast<size_t>(networkHeight)) {
-      break;
-    }
-    if (std::chrono::steady_clock::now() - start >
-        std::chrono::seconds(timeoutSeconds)) {
-      break;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  }
-}
-
 // ✅ Auto-Discover Peers Instead of Manually Adding Nodes
 std::vector<std::string> Network::discoverPeers() {
   std::vector<std::pair<std::string, EndpointRecord>> snapshot;
@@ -4293,34 +4276,6 @@ size_t Network::getTrackedEndpointCount() const {
   return knownPeerEndpoints.size();
 }
 
-//
-void Network::sendStateProof(std::shared_ptr<Transport> tr) {
-  if (!tr || !tr->isOpen())
-    return;
-
-  Blockchain &bc = Blockchain::getInstance();
-  const int h = bc.getHeight();
-  const Block &tip = bc.getLatestBlock();
-
-  // -- ❶ compute state root (pick the one you trust) --
-  std::string stateRoot =
-      bc.getLatestBlock().getMerkleRoot(); // or bc.getStateRoot()
-
-  // -- ❷ generate proof bytes --
-  std::string proof =
-      WinterfellStark::generateProof(stateRoot,             // blockHash
-                                     tip.getPreviousHash(), // prev
-                                     tip.getTxRoot());      // tx_root
-
-  alyncoin::StateProofProto proto;
-  proto.set_block_height(h);
-  proto.set_state_root(stateRoot);
-  proto.set_zk_proof(proof);
-
-  alyncoin::net::Frame fr;
-  fr.mutable_state_proof()->mutable_proof()->CopyFrom(proto);
-  sendFrame(tr, fr);
-}
 //
 
 // ✅ **Handle Incoming Data with Protobuf Validation**
@@ -6365,28 +6320,6 @@ bool Network::connectToNode(const std::string &host, int remotePort) {
     return false;
   }
 }
-//
-void Network::handleReceivedBlockIndex(const std::string &peerIP,
-                                       int peerBlockIndex) {
-  int localIndex = Blockchain::getInstance().getLatestBlock().getIndex();
-
-  if (localIndex <= 0) { // Only genesis present
-    std::cout << "⚠️ [Node] Only Genesis block found locally. Requesting "
-                 "snapshot from "
-              << logPeer(peerIP) << "\n";
-    sendForkRecoveryRequest(peerIP, "");
-    return;
-  }
-
-  if (peerBlockIndex > localIndex) {
-    std::cout << "📡 Peer " << logPeer(peerIP)
-              << " has longer chain. Requesting snapshot...\n";
-    sendForkRecoveryRequest(peerIP, "");
-  } else {
-    std::cout << "✅ Local chain is up-to-date. No sync needed.\n";
-  }
-}
-
 // ✅ **Fix Peer Saving & Loading**
 void Network::loadPeers() {
   const auto &cfg = getAppConfig();
@@ -7494,18 +7427,6 @@ void Network::cleanupPeers() {
   // reported peer count when the network is limited by external routing.
 }
 
-// Add methods to handle rollup block synchronization
-void Network::receiveRollupBlock(const std::string &data) {
-  if (data.empty()) {
-    std::cerr << "❌ [ERROR] Received empty rollup block data!\n";
-    return;
-  }
-
-  // Deserialize rollup block and handle it
-  RollupBlock rollupBlock = RollupBlock::deserialize(data);
-  Blockchain::getInstance().addRollupBlock(rollupBlock);
-  std::cout << "✅ Rollup block received and added to blockchain!\n";
-}
 //
 void Network::handleNewRollupBlock(const RollupBlock &newRollupBlock) {
   if (Blockchain::getInstance().isRollupBlockValid(newRollupBlock)) {
@@ -7517,32 +7438,6 @@ void Network::handleNewRollupBlock(const RollupBlock &newRollupBlock) {
     std::cerr << "[ERROR] Received invalid rollup block. Index: "
               << newRollupBlock.getIndex() << "\n";
   }
-}
-//
-bool Network::validateBlockSignatures(const Block &blk) {
-  std::vector<unsigned char> msgBytes = blk.getSignatureMessage();
-
-  std::vector<unsigned char> sigDil = blk.getDilithiumSignature();
-  std::vector<unsigned char> sigFal = blk.getFalconSignature();
-
-  std::vector<unsigned char> pubDil =
-      Crypto::getPublicKeyDilithium(blk.getMinerAddress());
-  std::vector<unsigned char> pubFal =
-      Crypto::getPublicKeyFalcon(blk.getMinerAddress());
-
-  if (!Crypto::verifyWithDilithium(msgBytes, sigDil, pubDil)) {
-    std::cerr << "Invalid Dilithium signature for block: " << blk.getHash()
-              << std::endl;
-    return false;
-  }
-
-  if (!Crypto::verifyWithFalcon(msgBytes, sigFal, pubFal)) {
-    std::cerr << "Invalid Falcon signature for block: " << blk.getHash()
-              << std::endl;
-    return false;
-  }
-
-  return true;
 }
 //
 void Network::broadcastRollupBlock(const RollupBlock &rollup) {
@@ -7579,12 +7474,6 @@ bool Network::peerSupportsSnapshot(const std::string &peerId) const {
 bool Network::peerSupportsWhisper(const std::string &peerId) const {
   if (auto snapshot = getPeerSnapshot(peerId); snapshot.state)
     return snapshot.state->supportsWhisper;
-  return false;
-}
-
-bool Network::peerSupportsTls(const std::string &peerId) const {
-  if (auto snapshot = getPeerSnapshot(peerId); snapshot.state)
-    return snapshot.state->supportsTls;
   return false;
 }
 
@@ -9151,12 +9040,6 @@ void Network::handleTailBlocks(const std::string &peer,
     }
     setPeerSyncMode(peer, PeerSyncProgress::Mode::Blocks);
   }
-}
-
-//
-void Network::handleHeaderBatch(const std::string &peer,
-                                const alyncoin::net::Headers &hdrs) {
-  HeadersSync::handleHeaders(peer, hdrs);
 }
 
 //

@@ -40,21 +40,11 @@ public:
   std::string getPublicKey() const;
   std::string getDilithiumPublicKey() const;
   std::string getFalconPublicKey() const;
-  std::string getPrivateKey() const;
   std::string getPrivateKeyPath() const;
-  bool privateKeyExists() const;
   static std::string generateAddress(const std::string &publicKey);
   const DilithiumKeyPair &getDilithiumKeyPair() const { return dilithiumKeys; }
   const FalconKeyPair &getFalconKeyPair() const { return falconKeys; }
   std::string getKeyIdentifier() const { return walletName; }
-
-  // Signing
-  std::string signWithPrivateKey(const std::string &message);
-
-  // Wallet file storage
-  bool saveKeys(const std::string &privKey, const std::string &pubKey);
-  void saveToFile(const std::string &filename) const;
-  static Wallet loadFromFile(const std::string &filename);
 
   // Transaction
   double getBalance() const;

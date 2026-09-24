@@ -135,10 +135,6 @@ std::string Wallet::loadKeyFile(const std::string& path) {
     return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 }
 
-bool Wallet::privateKeyExists() const {
-    return fs::exists(getPrivateKeyPath());
-}
-
 std::string Wallet::getPrivateKeyPath() const {
     return keyDirectory + walletName + "_private.pem";
 }
@@ -163,8 +159,6 @@ std::string Wallet::getFalconPublicKey() const {
         return falconKeys.publicKeyHex;
     return Crypto::toHex(falconKeys.publicKey);
 }
-std::string Wallet::getPrivateKey() const { return privateKey; }
-
 double Wallet::getBalance() const {
     return Blockchain::getInstance().getBalance(address);
 }
@@ -200,63 +194,7 @@ Transaction Wallet::createTransaction(const std::string& recipient, double amoun
     return tx;
 }
 
-// Sign arbitrary message with this wallet's private key
-std::string Wallet::signWithPrivateKey(const std::string& message) {
-    if (privateKey.empty()) {
-        std::cerr << "❌ RSA private key missing.\n";
-        return "";
-    }
-    return Crypto::signMessage(message, privateKey, false);
-}
-
 // Address generator
 std::string Wallet::generateAddress(const std::string& publicKey) {
     return Crypto::keccak256(publicKey).substr(0, 40);
-}
-
-bool Wallet::saveKeys(const std::string& privKey, const std::string& pubKey) {
-    std::ofstream privFile(getPrivateKeyPath());
-    std::ofstream pubFile(getPublicKeyPath(walletName, keyDirectory));
-    if (!privFile || !pubFile) {
-        std::cerr << "❌ Error: Failed to save wallet keys!\n";
-        return false;
-    }
-    privFile << privKey;
-    pubFile << pubKey;
-    return true;
-}
-
-void Wallet::saveToFile(const std::string& filename) const {
-    std::ofstream file(filename);
-    if (file) {
-        file << privateKey << "\n" << publicKey << "\n";
-        file << Crypto::toHex(dilithiumKeys.privateKey) << "\n"
-             << Crypto::toHex(dilithiumKeys.publicKey) << "\n";
-        file << Crypto::toHex(falconKeys.privateKey) << "\n"
-             << Crypto::toHex(falconKeys.publicKey) << "\n";
-    }
-}
-
-Wallet Wallet::loadFromFile(const std::string& filename) {
-    std::ifstream file(filename);
-    if (!file)
-        throw std::runtime_error("❌ Wallet file not found!");
-
-    std::string privKey, pubKey, dilPrivHex, dilPubHex, falcPrivHex, falcPubHex;
-    std::getline(file, privKey);
-    std::getline(file, pubKey);
-    std::getline(file, dilPrivHex);
-    std::getline(file, dilPubHex);
-    std::getline(file, falcPrivHex);
-    std::getline(file, falcPubHex);
-
-    Wallet wallet;
-    wallet.privateKey = privKey;
-    wallet.publicKey = pubKey;
-    wallet.dilithiumKeys.privateKey = Crypto::fromHex(dilPrivHex);
-    wallet.dilithiumKeys.publicKey = Crypto::fromHex(dilPubHex);
-    wallet.falconKeys.privateKey = Crypto::fromHex(falcPrivHex);
-    wallet.falconKeys.publicKey = Crypto::fromHex(falcPubHex);
-    wallet.address = Crypto::generateAddress(pubKey);
-    return wallet;
 }
