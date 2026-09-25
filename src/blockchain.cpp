@@ -785,8 +785,7 @@ Blockchain::BlockAddResult Blockchain::addBlock(const Block &block,
   double expectedSubsidy =
       isGenesisBlock
           ? 0.0
-          : consensus::calculateBlockSubsidy(*this, block.getIndex(), totalSupply,
-                                             block.getTimestamp());
+          : consensus::calculateBlockSubsidy(totalSupply);
   double expectedCoinbase =
       isGenesisBlock ? getGenesisPremineTotal() : expectedSubsidy + computedFees;
   const double rewardTolerance = 5e-5;
@@ -1163,11 +1162,7 @@ void Blockchain::noteNewL1(std::time_t timestamp) {
 }
 
 void Blockchain::refreshRewardFromTip() {
-  std::uint64_t nextHeight = 0;
-  if (!chain.empty())
-    nextHeight = static_cast<std::uint64_t>(chain.back().getIndex()) + 1ULL;
-  double subsidy =
-      consensus::calculateBlockSubsidy(*this, nextHeight, totalSupply, std::time(nullptr));
+  double subsidy = consensus::calculateBlockSubsidy(totalSupply);
   blockReward = std::min(subsidy, std::max(0.0, MAX_SUPPLY - totalSupply));
 }
 
@@ -1478,10 +1473,7 @@ Block Blockchain::minePendingTransactions(
     std::cout << "⛏️ No valid transactions found, creating empty block.\n";
   }
 
-  std::uint64_t nextHeight = chain.empty()
-                               ? 0
-                               : static_cast<std::uint64_t>(chain.back().getIndex()) + 1ULL;
-  double subsidy = consensus::calculateBlockSubsidy(*this, nextHeight, totalSupply, timestamp);
+  double subsidy = consensus::calculateBlockSubsidy(totalSupply);
   double coinbaseReward = subsidy + totalFeesCollected;
   if (coinbaseReward > 0.0) {
     Transaction rewardTx = Transaction::createSystemRewardTransaction(
@@ -2246,7 +2238,7 @@ bool Blockchain::loadFromDB() {
   if (persistedBlockReward > 0.0) {
     blockReward = persistedBlockReward;
   } else {
-    blockReward = consensus::calculateBlockSubsidy(*this);
+    blockReward = consensus::calculateBlockSubsidy(getTotalSupply());
   }
 
   uint64_t computedDifficulty = calculateSmartDifficulty(*this);
@@ -2749,9 +2741,7 @@ bool Blockchain::isValidNewBlock(const Block &newBlock) const {
   };
 
   const double supplyBefore = totalSupply;
-  const uint64_t blockHeight = static_cast<uint64_t>(newBlock.getIndex());
-  const double subsidyOnly = consensus::calculateBlockSubsidy(
-      *this, blockHeight, supplyBefore, newBlock.getTimestamp());
+  const double subsidyOnly = consensus::calculateBlockSubsidy(supplyBefore);
   double totalFeesInBlock = 0.0;
   for (const auto &tx : newBlock.getTransactions()) {
     if (tx.isMiningRewardFor(newBlock.getMinerAddress()))
@@ -3600,9 +3590,7 @@ void Blockchain::recalculateBalancesFromChain() {
         block.getMinerAddress() != "System") {
       double reward = block.getReward();
       if (reward <= 0.0) {
-        reward =
-            consensus::calculateBlockSubsidy(*this, block.getIndex(),
-                                             totalSupply, block.getTimestamp());
+        reward = consensus::calculateBlockSubsidy(totalSupply);
       }
       if (reward > 0.0) {
         balances[block.getMinerAddress()] += reward;

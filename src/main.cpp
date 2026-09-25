@@ -481,7 +481,7 @@ void start_rpc_server(Blockchain *blockchain, Network *network,
               {"result", nlohmann::json{{"address", addr}, {"balance", bal}}}};
         }
       } else if (method == "system.selfHealNow") {
-        std::thread([healer]() { healer->monitorAndHeal(); }).detach();
+        std::thread([healer]() { healer->checkPeerHeights(); }).detach();
         output = {{"result", nlohmann::json{{"ok", true}}}};
       } else if (method == "bridge.getPoR") {
         auto &cfg = getAppConfig();
@@ -1771,7 +1771,7 @@ static bool handleNodeMenuSelection(int choice, Blockchain &blockchain,
 
   case 10:
     std::cout << "🩺 Manually triggering self-healing check...\n";
-    healer.monitorAndHeal();
+    healer.checkPeerHeights();
     return true;
 
   case 11: {
@@ -2030,7 +2030,7 @@ int main(int argc, char *argv[]) {
       while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(interval));
         std::cout << "\n🩺 [Auto-Heal] Running periodic health monitor...\n";
-        healer.monitorAndHeal();
+        healer.checkPeerHeights();
       }
     });
     autoHealThread.detach();
@@ -2050,7 +2050,6 @@ int main(int argc, char *argv[]) {
   std::string cmd = (argc >= 2) ? std::string(argv[1]) : "";
 
   // ================= CLI COMMAND HANDLERS START =================
-  std::string currentBinPath = argv[0];
 
   // export-genesis <file>
   if (argc >= 3 && std::string(argv[1]) == "export-genesis") {

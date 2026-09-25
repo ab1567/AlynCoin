@@ -242,7 +242,6 @@ private:
   std::unique_ptr<boost::asio::ssl::context> tlsContext;
   boost::asio::ip::tcp::acceptor acceptor;
   std::thread listenerThread;
-  std::thread serverThread;
   std::unique_ptr<PeerManager> peerManager;
   std::unique_ptr<SelfHealingNode> selfHealer;
   std::string publicPeerId;
@@ -304,7 +303,6 @@ private:
   std::chrono::steady_clock::time_point lastPeerRebroadcast{};
   std::chrono::steady_clock::time_point lastGlobalPeerListBroadcast{};
   std::string lastGlobalPeerListDigest;
-  std::atomic<bool> peerFileLoaded{false};
   PeerBlacklist *blacklist;
   std::unordered_set<std::string> seenTxHashes;
   static Network *instancePtr;

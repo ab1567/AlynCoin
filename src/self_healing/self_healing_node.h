@@ -19,8 +19,6 @@ public:
     void checkPeerHeights();
     void kickStalledSync();
 
-    // Legacy wrappers (compat with CLI / tests)
-    void monitorAndHeal();
     NodeHealthStatus manualHeal();
 
 private:

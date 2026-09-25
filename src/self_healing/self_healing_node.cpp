@@ -160,12 +160,6 @@ void SelfHealingNode::kickStalledSync() {
     }
 }
 
-// ---------------------------------------------------------------------
-// Legacy wrappers used by older CLI paths
-void SelfHealingNode::monitorAndHeal() {
-    runHealthCheck(false);
-}
-
 NodeHealthStatus SelfHealingNode::manualHeal() {
     return runHealthCheck(true);
 }

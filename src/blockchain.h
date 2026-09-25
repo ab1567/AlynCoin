@@ -40,7 +40,6 @@ using boost::asio::ip::tcp;
 
 class Network;
 
-const double MAX_SUPPLY = 100000000.0;
 const size_t MAX_PENDING_TRANSACTIONS = 10000;
 const int EPOCH_SIZE = 64; // number of blocks per aggregated proof epoch
 const size_t MAX_ORPHAN_BLOCKS = 5000;
