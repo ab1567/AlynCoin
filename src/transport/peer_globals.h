@@ -18,9 +18,6 @@ struct SnapshotFileSink;
 
 // Per-peer state used during sync and message reassembly
 struct PeerState {
-  std::string jsonBuf;
-  std::string prefixBuf; // holds partial protocol prefix across chunks
-  std::vector<Block> orphanBuf;
   enum class SyncMode {
     Idle,
     Headers,
@@ -98,7 +95,6 @@ struct PeerState {
   bool headerBridgeActive{false};
   std::unordered_set<std::string> headerAnchorsRequested;
   int headerBestCommonHeight{-1};
-  std::string headerBestCommonHash;
   int headerLastBinaryProbe{-1};
   bool handshakeComplete{false};
   std::mutex m;

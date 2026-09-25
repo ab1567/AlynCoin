@@ -41,7 +41,6 @@ private:
   std::string epochRoot;
   std::vector<uint8_t> epochProof;
   boost::multiprecision::cpp_int accumulatedWork;
-  std::string transactionsToString() const;
 
 public:
   friend void ensureRootConsistency(const Block& b, int idx);
@@ -119,10 +118,8 @@ public:
   bool mineBlock(int difficulty);
   void signBlock(const std::string &minerPrivateKeyPath);
   bool hasValidProofOfWork() const;
-  void computeKeccakHash();
   bool isValid(const std::string &prevHash, int expectedDifficulty,
                bool forceFullValidation = true) const;
-  bool containsTransaction(const Transaction &tx) const;
   std::vector<unsigned char> getSignatureMessage() const;
   std::string getHashInput() const {
     return previousHash + std::to_string(timestamp) + std::to_string(nonce);

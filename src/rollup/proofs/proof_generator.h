@@ -13,9 +13,6 @@ public:
                                                const std::unordered_map<std::string, double>& stateAfter,
                                                const std::string& prevBlockHash);
 
-    static std::string generatePublicInput(const std::string& txRoot,
-                                           const std::string& stateRootBefore,
-                                           const std::string& stateRootAfter);
 
     static std::string generateRecursiveProof(const std::string& prevProof,
                                               const std::string& newProof);

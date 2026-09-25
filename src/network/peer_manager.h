@@ -25,7 +25,6 @@ private:
     uint64_t localWork = 0;
     PeerBlacklist* blacklist;
     Network* network;
-    std::string externalAddress_;
     mutable std::mutex peerMutex;
 
     enum class PeerInsertResult {
@@ -68,7 +67,6 @@ public:
     int getPeerHeight(const std::string& peer) const;
     std::string getPeerTipHash(const std::string& peer) const;
     void setPeerTipHash(const std::string& peer, const std::string& tipHash);
-    void recordTipHash(const std::string& peer, const std::string& tipHash);
 
     // New work tracking helpers
     void setLocalWork(uint64_t work);
@@ -85,8 +83,6 @@ public:
                               int height);
     std::string getConsensusCommonHash(int localHeight) const;
 
-    void setExternalAddress(const std::string &address);
-    std::string getExternalAddress() const;
 };
 
 #endif // PEER_MANAGER_H

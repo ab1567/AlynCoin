@@ -29,11 +29,8 @@ public:
   uint64_t getNonce() const;
   std::string getTransactionHash() const;
   std::string getZkProof() const;
-  [[deprecated("use getTransactionHash")]]
-  std::string hashLegacy() const;
   std::string toString() const;
   std::string getHash() const;
-  std::string getSignature() const;
   std::string getSenderPublicKeyDilithium() const {
     return senderPublicKeyDilithium;
   }
@@ -48,7 +45,6 @@ public:
   void setSenderPublicKeyFalcon(const std::string &key) {
     senderPublicKeyFalcon = key;
   }
-  void setAmount(double newAmount);
   void setZkProof(const std::string &proof);
   void setNonce(uint64_t value);
   void signTransaction(const std::vector<unsigned char> &dilithiumPrivateKey,
@@ -71,8 +67,6 @@ public:
   static std::vector<Transaction> loadAllFromDB();
   // Burn
   static double calculateBurnRate(int recentTxCount);
-  static double computeBurnedAmount(double amount, int recentTxCount);
-  void applyBurn(std::string &sender, double &amount, int recentTxCount);
   static Transaction createSystemRewardTransaction(
     const std::string &recipient,
     double amount,

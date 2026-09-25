@@ -8,7 +8,6 @@
 #include "consensus/reward.h"
 #include "embedded_genesis.h"
 #include "genesis.h"
-#include "layer2/state_channel.h"
 #include "network.h"
 #include "config.h"
 #include "rollup/proofs/proof_verifier.h"
@@ -50,7 +49,6 @@ using boost::multiprecision::cpp_int;
 #define ROLLUP_CHAIN_FILE "rollup_chain.dat"
 namespace fs = std::filesystem;
 const std::string BLOCKCHAIN_DB_PATH = DBPaths::getBlockchainDB();
-std::vector<StateChannel> stateChannels;
 std::vector<RollupBlock> rollupBlocks;
 double totalSupply = 0.0;
 static Blockchain *g_blockchain_singleton = nullptr;
@@ -133,20 +131,6 @@ double getGenesisPremineTotal() {
 }
 } // namespace
 
-// --- helper ---------------------------------------------------------------
-// Compute BLAKE3 hash of concatenated block hashes for the epoch ending at
-// endIndex (inclusive). Returns empty string if insufficient history.
-std::string Blockchain::computeEpochRoot(size_t endIndex) const {
-  if (endIndex + 1 < static_cast<size_t>(EPOCH_SIZE))
-    return "";
-  if (endIndex >= chain.size())
-    return "";
-  size_t start = endIndex + 1 - EPOCH_SIZE;
-  std::string combined;
-  for (size_t i = start; i <= endIndex; ++i)
-    combined += chain[i].getHash();
-  return Crypto::blake3(combined);
-}
 Blockchain &getBlockchain() { return Blockchain::getActiveInstance(); }
 std::atomic<bool> Blockchain::isMining{false};
 
@@ -801,8 +785,7 @@ Blockchain::BlockAddResult Blockchain::addBlock(const Block &block,
   double expectedSubsidy =
       isGenesisBlock
           ? 0.0
-          : consensus::calculateBlockSubsidy(*this, block.getIndex(), totalSupply,
-                                             block.getTimestamp());
+          : consensus::calculateBlockSubsidy(totalSupply);
   double expectedCoinbase =
       isGenesisBlock ? getGenesisPremineTotal() : expectedSubsidy + computedFees;
   const double rewardTolerance = 5e-5;
@@ -1179,11 +1162,7 @@ void Blockchain::noteNewL1(std::time_t timestamp) {
 }
 
 void Blockchain::refreshRewardFromTip() {
-  std::uint64_t nextHeight = 0;
-  if (!chain.empty())
-    nextHeight = static_cast<std::uint64_t>(chain.back().getIndex()) + 1ULL;
-  double subsidy =
-      consensus::calculateBlockSubsidy(*this, nextHeight, totalSupply, std::time(nullptr));
+  double subsidy = consensus::calculateBlockSubsidy(totalSupply);
   blockReward = std::min(subsidy, std::max(0.0, MAX_SUPPLY - totalSupply));
 }
 
@@ -1247,10 +1226,6 @@ bool Blockchain::shouldAutoMine() const {
   return !pendingTransactions.empty();
 }
 
-// ✅ **Check for pending transactions**
-bool Blockchain::hasPendingTransactions() const {
-  return !pendingTransactions.empty(); // ✅ Only checks, does not modify!
-}
 //
 void Blockchain::setPendingTransactions(
     const std::vector<Transaction> &transactions) {
@@ -1498,10 +1473,7 @@ Block Blockchain::minePendingTransactions(
     std::cout << "⛏️ No valid transactions found, creating empty block.\n";
   }
 
-  std::uint64_t nextHeight = chain.empty()
-                               ? 0
-                               : static_cast<std::uint64_t>(chain.back().getIndex()) + 1ULL;
-  double subsidy = consensus::calculateBlockSubsidy(*this, nextHeight, totalSupply, timestamp);
+  double subsidy = consensus::calculateBlockSubsidy(totalSupply);
   double coinbaseReward = subsidy + totalFeesCollected;
   if (coinbaseReward > 0.0) {
     Transaction rewardTx = Transaction::createSystemRewardTransaction(
@@ -1581,36 +1553,6 @@ Block Blockchain::minePendingTransactions(
   std::cout << "✅ Block mined and added successfully. Total burned supply: "
             << totalBurnedSupply << std::endl;
   return newBlock;
-}
-
-// ✅ **Sync Blockchain**
-void Blockchain::syncChain(const Json::Value &jsonData) {
-  std::unique_lock<std::recursive_mutex> lock(blockchainMutex);
-
-  std::vector<Block> newChain;
-  for (const auto &blockJson : jsonData["chain"]) {
-    alyncoin::BlockProto protoBlock;
-    if (!protoBlock.ParseFromString(blockJson.asString())) {
-      std::cerr << "❌ [ERROR] Failed to parse Protobuf block data!\n";
-      return;
-    }
-
-    // ✅ Use fromProto() constructor directly
-    Block newBlock = Block::fromProto(protoBlock);
-    newChain.push_back(newBlock);
-  }
-
-  if (newChain.size() > chain.size()) {
-    chain = newChain;
-    refreshRewardFromTip();
-    lock.unlock();
-    saveToDB();
-    std::cout
-        << "✅ Blockchain successfully synchronized with a longer chain!\n";
-  } else {
-    std::cerr
-        << "⚠️ [WARNING] Received chain was not longer. No changes applied.\n";
-  }
 }
 
 // ✅ **Start Mining**
@@ -1735,15 +1677,6 @@ void Blockchain::printBlockchain() const {
             << " AlynCoin 🔥\n";
 }
 
-// ✅ **Show pending transactions (before they are mined)**
-void Blockchain::printPendingTransactions() {
-  if (!pendingTransactions.empty()) {
-    std::cout << "✅ Pending transactions available.\n";
-  } else {
-    std::cout << "✅ No pending transactions.\n";
-  }
-}
-
 // ✅ **Add a new transaction**
 void Blockchain::addTransaction(const Transaction &tx) {
   std::lock_guard<std::recursive_mutex> lock(blockchainMutex);
@@ -1843,10 +1776,6 @@ void Blockchain::addTransaction(const Transaction &tx) {
 
 void Blockchain::setAutoMiningRewardMode(bool enabled) {
   autoMiningRewardMode.store(enabled, std::memory_order_relaxed);
-}
-
-bool Blockchain::isAutoMiningRewardMode() const {
-  return autoMiningRewardMode.load(std::memory_order_relaxed);
 }
 
 // ✅ **Get balance of a public key**
@@ -2309,7 +2238,7 @@ bool Blockchain::loadFromDB() {
   if (persistedBlockReward > 0.0) {
     blockReward = persistedBlockReward;
   } else {
-    blockReward = consensus::calculateBlockSubsidy(*this);
+    blockReward = consensus::calculateBlockSubsidy(getTotalSupply());
   }
 
   uint64_t computedDifficulty = calculateSmartDifficulty(*this);
@@ -2560,113 +2489,6 @@ void Blockchain::applyVestingSchedule() {
   }
   saveVestingInfoToDB();
 }
-// ✅ Serialize Blockchain to Protobuf (safe for cross-node sync)
-bool Blockchain::serializeBlockchain(std::string &outData) const {
-  alyncoin::BlockchainProto blockchainProto;
-
-  // ✅ Mandatory field to prevent parse failure
-  blockchainProto.set_chain_id(1);
-
-  // ✅ Serialize blocks
-  int blkCount = 0;
-  for (const auto &block : chain) {
-    std::cout << "[DEBUG] 🧩 Block[" << blkCount
-              << "] zkProof vector size before toProtobuf: "
-              << block.getZkProof().size()
-              << " bytes, Hash: " << block.getHash() << "\n";
-    alyncoin::BlockProto *protoBlock = blockchainProto.add_blocks();
-    *protoBlock = block.toProtobuf();
-    blkCount++;
-  }
-
-  // ✅ Serialize pending transactions
-  for (const auto &tx : pendingTransactions) {
-    alyncoin::TransactionProto *txProto =
-        blockchainProto.add_pending_transactions();
-    *txProto = tx.toProto();
-  }
-
-  blockchainProto.set_difficulty(difficulty);
-  blockchainProto.set_block_reward(blockReward);
-
-  // ✅ Serialize to array (needed for ParseFromArray compatibility)
-  size_t size = blockchainProto.ByteSizeLong();
-  outData.resize(size);
-  if (!blockchainProto.SerializeToArray(outData.data(),
-                                        static_cast<int>(size))) {
-    std::cerr << "❌ SerializeToArray failed!\n";
-    return false;
-  }
-
-  std::cout
-      << "[DEBUG] ✅ BlockchainProto serialization complete. Total Blocks: "
-      << blkCount << ", Serialized Size: " << size << " bytes\n";
-
-  return true;
-}
-
-// ✅ Deserialize Blockchain from Protobuf
-bool Blockchain::deserializeBlockchain(const std::string &data) {
-  std::unique_lock<std::recursive_mutex> lock(blockchainMutex);
-
-  if (data.empty()) {
-    std::cerr << "❌ [ERROR] Received empty Protobuf blockchain data!\n";
-    return false;
-  }
-
-  std::cout << "📡 [DEBUG] Received Blockchain Data (Size: " << data.size()
-            << " bytes)\n";
-
-  alyncoin::BlockchainProto protoChain;
-  if (!protoChain.ParseFromArray(data.data(), static_cast<int>(data.size()))) {
-    std::cerr << "❌ [ERROR] Failed to parse decoded blockchain Protobuf using "
-                 "ParseFromArray.\n";
-    return false;
-  }
-
-  std::cout << "🧪 [DEBUG] Parsed blockchain chain_id = "
-            << protoChain.chain_id() << "\n";
-
-  // Instead of immediately loading, build a temporary receivedChain:
-  std::vector<Block> receivedChain;
-  for (int i = 0; i < protoChain.blocks_size(); ++i) {
-    try {
-      Block blk = Block::fromProto(protoChain.blocks(i));
-      receivedChain.push_back(blk);
-    } catch (const std::exception &e) {
-      std::cerr << "❌ [ERROR] Failed to parse BlockProto at index " << i
-                << ": " << e.what() << "\n";
-      return false;
-    }
-  }
-
-  // 🔥 New: Call fork comparison logic
-  lock.unlock();
-  compareAndMergeChains(receivedChain);
-
-  return true; // Always return true even if fork was weaker (forkView saved)
-}
-
-// ✅ Optional helper for base64 input
-bool Blockchain::deserializeBlockchainBase64(const std::string &base64Str) {
-  std::string rawData = Crypto::base64Decode(base64Str);
-  if (rawData.empty()) {
-    std::cerr << "❌ [ERROR] Base64 decode returned empty result.\n";
-    return false;
-  }
-
-  std::cout << "🧪 [DEBUG] Decoded blockchain data size: " << rawData.size()
-            << " bytes\n";
-  std::cout << "🧪 [DEBUG] First 32 bytes (hex): ";
-  for (size_t i = 0; i < std::min<size_t>(32, rawData.size()); ++i) {
-    printf("%02x", static_cast<unsigned char>(rawData[i]));
-  }
-  std::cout << std::endl;
-
-  // ✅ Reuse robust logic that compares and merges forks
-  return deserializeBlockchain(rawData);
-}
-
 //
 bool Blockchain::loadFromProto(const alyncoin::BlockchainProto &protoChain) {
 
@@ -2919,9 +2741,7 @@ bool Blockchain::isValidNewBlock(const Block &newBlock) const {
   };
 
   const double supplyBefore = totalSupply;
-  const uint64_t blockHeight = static_cast<uint64_t>(newBlock.getIndex());
-  const double subsidyOnly = consensus::calculateBlockSubsidy(
-      *this, blockHeight, supplyBefore, newBlock.getTimestamp());
+  const double subsidyOnly = consensus::calculateBlockSubsidy(supplyBefore);
   double totalFeesInBlock = 0.0;
   for (const auto &tx : newBlock.getTransactions()) {
     if (tx.isMiningRewardFor(newBlock.getMinerAddress()))
@@ -3654,83 +3474,6 @@ void Blockchain::saveRollupChain() const {
   std::cout << "💾 Rollup chain saved successfully.\n";
 }
 
-// --- Load Rollup Chain ---
-void Blockchain::loadRollupChain() {
-  std::ifstream in(ROLLUP_CHAIN_FILE, std::ios::binary);
-  if (!in) {
-    std::cerr << "⚠️ Rollup chain file not found.\n";
-    return;
-  }
-  RollupBlock block;
-  while (in.read(reinterpret_cast<char *>(&block), sizeof(RollupBlock))) {
-    rollupChain.push_back(block);
-  }
-  std::cout << "✅ Rollup chain loaded. Blocks: " << rollupChain.size() << "\n";
-}
-
-// --- Merge Rollup Chain ---
-void Blockchain::mergeRollupChain(const std::vector<RollupBlock> &newChain) {
-  for (const auto &block : newChain) {
-    rollupChain.push_back(block);
-  }
-  std::cout << "🔗 Rollup chain merged. Total blocks: " << rollupChain.size()
-            << "\n";
-}
-
-// --- Aggregate Off-Chain Transactions ---
-std::vector<Transaction>
-Blockchain::aggregateOffChainTxs(const std::vector<Transaction> &offChainTxs) {
-  std::unordered_map<std::string, double> balanceMap;
-
-  // Sum up amounts per recipient
-  for (const auto &tx : offChainTxs) {
-    balanceMap[tx.getRecipient()] += tx.getAmount();
-  }
-
-  // Create a single transaction per recipient
-  std::vector<Transaction> aggregatedTxs;
-  for (const auto &[recipient, amount] : balanceMap) {
-    Transaction aggTx("Aggregator", recipient, amount, "", "",
-                      std::time(nullptr));
-    aggregatedTxs.push_back(aggTx);
-  }
-
-  return aggregatedTxs;
-}
-// --- Create Rollup Block ---
-RollupBlock
-Blockchain::createRollupBlock(const std::vector<Transaction> &offChainTxs) {
-  std::unordered_map<std::string, double> stateBefore = balances;
-  std::unordered_map<std::string, double> stateAfter =
-      simulateL2StateUpdate(stateBefore, offChainTxs);
-
-  int rollupIndex = rollupChain.size();
-  std::string prevHash =
-      rollupIndex == 0 ? "GenesisRollup" : rollupChain.back().getHash();
-
-  RollupBlock rollupBlock(rollupIndex, prevHash, offChainTxs);
-
-  std::string prevProof =
-      rollupIndex == 0 ? "GenesisProof" : rollupChain.back().getRollupProof();
-
-  rollupBlock.generateRollupProof(stateBefore, stateAfter, prevProof);
-
-  return rollupBlock;
-}
-
-// Block reward
-double Blockchain::calculateBlockReward() {
-  const uint64_t nextHeight = chain.empty()
-                                   ? 0
-                                   : static_cast<uint64_t>(chain.back().getIndex()) + 1ULL;
-  double reward = consensus::calculateBlockSubsidy(
-      *this, nextHeight, totalSupply, std::time(nullptr));
-  if (blockReward > 0.0)
-    reward = std::min(reward, blockReward);
-  blockReward = std::min(reward, std::max(0.0, MAX_SUPPLY - totalSupply));
-  return blockReward;
-}
-
 // adjustDifficulty
 void Blockchain::adjustDifficulty() {
   int newDifficulty = calculateSmartDifficulty(*this);
@@ -3747,23 +3490,6 @@ void Blockchain::adjustDifficulty() {
     }
   }
 }
-// block time
-double Blockchain::getAverageBlockTime(int recentCount) const {
-  if (chain.size() < 2)
-    return 60.0; // default 60s estimate
-
-  int count = std::min((int)chain.size() - 1, recentCount);
-  double totalTime = 0.0;
-
-  for (int i = chain.size() - count; i < chain.size(); ++i) {
-    time_t prev = chain[i - 1].getTimestamp();
-    time_t curr = chain[i].getTimestamp();
-    totalTime += difftime(curr, prev);
-  }
-
-  return totalTime / count;
-}
-
 double Blockchain::getAverageDifficulty(int recentCount) const {
   if (chain.empty())
     return difficulty;
@@ -3864,9 +3590,7 @@ void Blockchain::recalculateBalancesFromChain() {
         block.getMinerAddress() != "System") {
       double reward = block.getReward();
       if (reward <= 0.0) {
-        reward =
-            consensus::calculateBlockSubsidy(*this, block.getIndex(),
-                                             totalSupply, block.getTimestamp());
+        reward = consensus::calculateBlockSubsidy(totalSupply);
       }
       if (reward > 0.0) {
         balances[block.getMinerAddress()] += reward;
@@ -4240,38 +3964,6 @@ time_t Blockchain::getFirstPendingL2Timestamp() const {
   return 0;
 }
 
-//
-std::vector<Transaction>
-Blockchain::getAllTransactionsForAddress(const std::string &address) {
-  std::vector<Transaction> result;
-  for (const Block &blk : this->getAllBlocks()) {
-    if (!blk.getTransactions().empty()) {
-      for (const Transaction &tx : blk.getTransactions()) {
-        if (tx.getSender() == address || tx.getRecipient() == address) {
-          result.push_back(tx);
-        }
-      }
-    }
-  }
-  return result;
-}
-
-//
-int Blockchain::findCommonAncestorIndex(const std::vector<Block> &otherChain) {
-  const std::vector<Block> &localChain = getChain();
-
-  int commonIndex = -1;
-  int minLength = std::min(localChain.size(), otherChain.size());
-
-  for (int i = 0; i < minLength; ++i) {
-    if (localChain[i].getHash() == otherChain[i].getHash()) {
-      commonIndex = i;
-    } else {
-      break;
-    }
-  }
-  return commonIndex;
-}
 //
 bool Blockchain::rollbackToIndex(int index) {
   if (index < 0 || index >= static_cast<int>(chain.size())) {

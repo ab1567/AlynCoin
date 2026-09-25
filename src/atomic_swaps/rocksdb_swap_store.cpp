@@ -39,17 +39,3 @@ std::optional<AtomicSwap> RocksDBAtomicSwapStore::loadSwap(const std::string& uu
     if (!deserializeSwap(value, swap)) return std::nullopt;
     return swap;
 }
-
-std::vector<AtomicSwap> RocksDBAtomicSwapStore::getAllSwaps() {
-    std::lock_guard<std::mutex> lock(mtx);
-    std::vector<AtomicSwap> result;
-    std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(rocksdb::ReadOptions()));
-
-    for (it->Seek("aswap:"); it->Valid() && it->key().starts_with("aswap:"); it->Next()) {
-        AtomicSwap swap;
-        if (deserializeSwap(it->value().ToString(), swap)) {
-            result.push_back(swap);
-        }
-    }
-    return result;
-}

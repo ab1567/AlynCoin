@@ -46,18 +46,6 @@ public:
     // ✅ Generate Recursive zk-STARK Proof from inner proof + expected hash
     static std::string generateRecursiveProof(const std::string& address, size_t txCount);
 
-    // ✅ NFT zk-STARK Proof Verification
-    static bool verifyNFTZkProof(const NFT& nft) {
-        if (nft.zkStarkProof.empty()) {
-            std::cerr << "❌ [NFT-ZK] Missing zk-STARK proof data.\n";
-            return false;
-        }
-        const std::string proofStr(reinterpret_cast<const char*>(nft.zkStarkProof.data()), nft.zkStarkProof.size());
-        const std::string dummyPrev = "";
-        const std::string dummyRoot = "";
-        return verifyProof(proofStr, nft.id, dummyPrev, dummyRoot);
-    }
-
 	static bool verifyIdentityProof(const std::string& proof, const std::string& uuid,
                                 const std::string& name, const std::string& metadataHash);
 

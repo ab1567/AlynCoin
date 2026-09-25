@@ -21,7 +21,6 @@ public:
     bool saveSwap(const AtomicSwap& swap) override;
     bool updateSwap(const AtomicSwap& swap) override;
     std::optional<AtomicSwap> loadSwap(const std::string& uuid) override;
-    std::vector<AtomicSwap> getAllSwaps();
 
 private:
     rocksdb::TransactionDB* db;
