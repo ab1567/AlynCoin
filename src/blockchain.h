@@ -6,7 +6,6 @@
 #include <generated/transaction_protos.pb.h>
 #include "block.h"
 #include "crypto_utils.h"
-#include "layer2/state_channel.h"
 #include "rollup/rollup_block.h"
 #include "rollup/rollup_utils.h"
 #include "transaction.h"
@@ -156,18 +155,15 @@ public:
   void recalculateBalancesFromChain();
   void updateFromJSON(const std::string &jsonData);
   void clearPendingTransactions();
-  void printPendingTransactions();
   int getIndex() const { return static_cast<int>(chain.size()) - 1; }
   void savePendingTransactionsToDB();
   void loadTransactionsFromDB();
   Block createGenesisBlock(bool force = false);
   bool exportGenesisBlock(const std::string &path) const;
   bool importGenesisBlock(const std::string &path);
-  bool deserializeBlockchain(const std::string &data);
   void fromJSON(const Json::Value &root);
   void addTransaction(const Transaction &tx);
   void setAutoMiningRewardMode(bool enabled);
-  bool isAutoMiningRewardMode() const;
   std::vector<Transaction> getPendingTransactions() const;
   bool isTransactionValid(const Transaction &tx) const;
   std::vector<unsigned char> signTransaction(const std::vector<unsigned char> &privateKey,
@@ -189,7 +185,6 @@ public:
   void stopMining();
   bool isMiningActive() const;
   bool resumeMiningFromLastConfig();
-  bool hasPendingTransactions() const;
   Block minePendingTransactions(const std::string &minerAddress,
                                 const std::vector<unsigned char> &minerDilithiumPriv,
                                 const std::vector<unsigned char> &minerFalconPriv,
@@ -224,8 +219,6 @@ public:
   void replaceChain(const std::vector<Block> &newChain);
   const Block &getLatestBlock() const;
   void printBlockchain() const;
-  void requestFullSync();
-  bool processStateChannelCommitment(const StateChannel &channel);
   void saveRollupChain() const;
     double getTotalBurnedSupply() const { return totalBurnedSupply; }
     double getTotalSupply() const;

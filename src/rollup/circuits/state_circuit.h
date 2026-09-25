@@ -12,9 +12,6 @@ public:
     // ✅ Hash commitments
     std::string computeStateRootHash() const;
 
-    // ✅ Access full state map
-    const std::unordered_map<std::string, double>& getAccountStates() const;
-
     void addAccountState(const std::string& address, double balance);
 
 private:

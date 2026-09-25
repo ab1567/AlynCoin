@@ -178,8 +178,6 @@ file(GLOB SOURCES
   ${SOURCE_DIR}/transport/tcp_transport.h
   ${SOURCE_DIR}/transport/ssl_transport.cpp
   ${SOURCE_DIR}/transport/ssl_transport.h
-  ${SOURCE_DIR}/transport/pubsub_router.cpp
-  ${SOURCE_DIR}/transport/pubsub_router.h
   ${SOURCE_DIR}/transport/peer_globals.cpp
   ${SOURCE_DIR}/epoch_sync.cpp
   ${SOURCE_DIR}/syncing/headers_sync.cpp

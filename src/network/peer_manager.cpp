@@ -364,16 +364,6 @@ uint64_t PeerManager::getMedianPeerWork() const {
     return works[works.size() / 2];
 }
 
-void PeerManager::setExternalAddress(const std::string &address) {
-    std::lock_guard<std::mutex> guard(peerMutex);
-    externalAddress_ = address;
-}
-
-std::string PeerManager::getExternalAddress() const {
-    std::lock_guard<std::mutex> guard(peerMutex);
-    return externalAddress_;
-}
-
 uint64_t PeerManager::getMedianNetworkHeight() {
     std::vector<int> heights;
 
@@ -510,10 +500,6 @@ void PeerManager::setPeerTipHash(const std::string& peer, const std::string& tip
     std::lock_guard<std::mutex> guard(peerMutex);
     peerTipHashes[peer] = Crypto::normaliseHash(tipHash);
 }
-void PeerManager::recordTipHash(const std::string& peer, const std::string& tipHash) {
-    setPeerTipHash(peer, tipHash);
-}
-
 int PeerManager::getMaxPeerHeight() const {
     int maxH = -1;
     std::lock_guard<std::mutex> guard(peerMutex);

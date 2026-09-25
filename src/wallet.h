@@ -31,7 +31,6 @@ public:
   Wallet(const std::string &privateKeyPath, const std::string &keyDirectoryPath, const std::string &address, const std::string &passphrase); // Load from private key
 
   // Key management
-  void generateKeyPair(); // RSA
   void generateDilithiumKeyPair();
   void generateFalconKeyPair();
 

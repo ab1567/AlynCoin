@@ -574,10 +574,6 @@ double Transaction::calculateBurnRate(int recentTxCount) {
   return std::min(MAX_BURN_RATE, std::max(MIN_BURN_RATE, burnRate));
 }
 
-double Transaction::computeBurnedAmount(double amount, int recentTxCount) {
-    return amount * calculateBurnRate(recentTxCount);
-}
-
 // ✅ Load Only Confirmed Transactions from RocksDB
 std::vector<Transaction> Transaction::loadAllFromDB() {
     std::vector<Transaction> loaded;

@@ -194,10 +194,6 @@ std::string HealthMonitor::getLocalTipHash() const {
     return blockchain_->getLatestBlockHash();
 }
 
-std::string HealthMonitor::getNetworkTipHash() const {
-    return peerManager_->getMajorityTipHash();
-}
-
 uint64_t HealthMonitor::getNetworkHeight() const {
     return peerManager_->getMedianNetworkHeight();
 }

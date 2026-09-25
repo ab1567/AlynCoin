@@ -42,7 +42,6 @@ private:
     std::chrono::time_point<std::chrono::steady_clock> lastPeerDialAttempt_;
 
     std::string getLocalTipHash() const;
-    std::string getNetworkTipHash() const;
     uint64_t getNetworkHeight() const;
 };
 

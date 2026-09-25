@@ -8,7 +8,6 @@
 #include "consensus/reward.h"
 #include "embedded_genesis.h"
 #include "genesis.h"
-#include "layer2/state_channel.h"
 #include "network.h"
 #include "config.h"
 #include "rollup/proofs/proof_verifier.h"
@@ -50,7 +49,6 @@ using boost::multiprecision::cpp_int;
 #define ROLLUP_CHAIN_FILE "rollup_chain.dat"
 namespace fs = std::filesystem;
 const std::string BLOCKCHAIN_DB_PATH = DBPaths::getBlockchainDB();
-std::vector<StateChannel> stateChannels;
 std::vector<RollupBlock> rollupBlocks;
 double totalSupply = 0.0;
 static Blockchain *g_blockchain_singleton = nullptr;
@@ -1233,10 +1231,6 @@ bool Blockchain::shouldAutoMine() const {
   return !pendingTransactions.empty();
 }
 
-// ✅ **Check for pending transactions**
-bool Blockchain::hasPendingTransactions() const {
-  return !pendingTransactions.empty(); // ✅ Only checks, does not modify!
-}
 //
 void Blockchain::setPendingTransactions(
     const std::vector<Transaction> &transactions) {
@@ -1691,15 +1685,6 @@ void Blockchain::printBlockchain() const {
             << " AlynCoin 🔥\n";
 }
 
-// ✅ **Show pending transactions (before they are mined)**
-void Blockchain::printPendingTransactions() {
-  if (!pendingTransactions.empty()) {
-    std::cout << "✅ Pending transactions available.\n";
-  } else {
-    std::cout << "✅ No pending transactions.\n";
-  }
-}
-
 // ✅ **Add a new transaction**
 void Blockchain::addTransaction(const Transaction &tx) {
   std::lock_guard<std::recursive_mutex> lock(blockchainMutex);
@@ -1799,10 +1784,6 @@ void Blockchain::addTransaction(const Transaction &tx) {
 
 void Blockchain::setAutoMiningRewardMode(bool enabled) {
   autoMiningRewardMode.store(enabled, std::memory_order_relaxed);
-}
-
-bool Blockchain::isAutoMiningRewardMode() const {
-  return autoMiningRewardMode.load(std::memory_order_relaxed);
 }
 
 // ✅ **Get balance of a public key**
@@ -2516,48 +2497,6 @@ void Blockchain::applyVestingSchedule() {
   }
   saveVestingInfoToDB();
 }
-// ✅ Deserialize Blockchain from Protobuf
-bool Blockchain::deserializeBlockchain(const std::string &data) {
-  std::unique_lock<std::recursive_mutex> lock(blockchainMutex);
-
-  if (data.empty()) {
-    std::cerr << "❌ [ERROR] Received empty Protobuf blockchain data!\n";
-    return false;
-  }
-
-  std::cout << "📡 [DEBUG] Received Blockchain Data (Size: " << data.size()
-            << " bytes)\n";
-
-  alyncoin::BlockchainProto protoChain;
-  if (!protoChain.ParseFromArray(data.data(), static_cast<int>(data.size()))) {
-    std::cerr << "❌ [ERROR] Failed to parse decoded blockchain Protobuf using "
-                 "ParseFromArray.\n";
-    return false;
-  }
-
-  std::cout << "🧪 [DEBUG] Parsed blockchain chain_id = "
-            << protoChain.chain_id() << "\n";
-
-  // Instead of immediately loading, build a temporary receivedChain:
-  std::vector<Block> receivedChain;
-  for (int i = 0; i < protoChain.blocks_size(); ++i) {
-    try {
-      Block blk = Block::fromProto(protoChain.blocks(i));
-      receivedChain.push_back(blk);
-    } catch (const std::exception &e) {
-      std::cerr << "❌ [ERROR] Failed to parse BlockProto at index " << i
-                << ": " << e.what() << "\n";
-      return false;
-    }
-  }
-
-  // 🔥 New: Call fork comparison logic
-  lock.unlock();
-  compareAndMergeChains(receivedChain);
-
-  return true; // Always return true even if fork was weaker (forkView saved)
-}
-
 //
 bool Blockchain::loadFromProto(const alyncoin::BlockchainProto &protoChain) {
 

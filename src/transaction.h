@@ -45,7 +45,6 @@ public:
   void setSenderPublicKeyFalcon(const std::string &key) {
     senderPublicKeyFalcon = key;
   }
-  void setAmount(double newAmount);
   void setZkProof(const std::string &proof);
   void setNonce(uint64_t value);
   void signTransaction(const std::vector<unsigned char> &dilithiumPrivateKey,
@@ -68,7 +67,6 @@ public:
   static std::vector<Transaction> loadAllFromDB();
   // Burn
   static double calculateBurnRate(int recentTxCount);
-  static double computeBurnedAmount(double amount, int recentTxCount);
   static Transaction createSystemRewardTransaction(
     const std::string &recipient,
     double amount,

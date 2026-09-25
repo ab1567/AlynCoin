@@ -13,10 +13,6 @@ std::string StateCircuit::computeStateRootHash() const {
     return RollupUtils::calculateMerkleRoot(accountHashes);
 }
 
-const std::unordered_map<std::string, double>& StateCircuit::getAccountStates() const {
-    return accountStates;
-}
-
 std::string StateCircuit::hashAccountData(const std::string& address, double balance) const {
     std::ostringstream ss;
     ss << address << balance;

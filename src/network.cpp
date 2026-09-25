@@ -89,7 +89,6 @@
 #endif
 #include <natpmp.h>
 #endif
-#include "transport/pubsub_router.h"
 #include "transport/tcp_transport.h"
 
 using namespace alyncoin;
@@ -1149,7 +1148,6 @@ struct EpochProofEntry {
 static std::unordered_map<int, EpochProofEntry> receivedEpochProofs;
 static std::mutex epochProofMutex;
 static std::map<uint64_t, Block> futureBlockBuffer;
-PubSubRouter g_pubsub;
 namespace fs = std::filesystem;
 Network *Network::instancePtr = nullptr;
 
@@ -2442,12 +2440,6 @@ Network::Network(unsigned short port, Blockchain *blockchain,
     std::cout << "🌐 Network listener started on port: " << std::dec << port
               << "\n";
     peerManager = std::make_unique<PeerManager>(blacklistPtr, this);
-    if (!configuredExternalAddress.empty()) {
-      auto announce = determineAnnounceEndpoint();
-      if (!announce.first.empty() && announce.second > 0)
-        peerManager->setExternalAddress(announce.first + ':' +
-                                        std::to_string(announce.second));
-    }
     selfHealer =
         std::make_unique<SelfHealingNode>(blockchain, peerManager.get());
     isRunning = true;
@@ -2518,12 +2510,6 @@ void Network::listenForConnections() {
 
 void Network::start() {
   startServer();
-  if (peerManager) {
-    auto endpoint = determineAnnounceEndpoint();
-    if (!endpoint.first.empty() && endpoint.second > 0)
-      peerManager->setExternalAddress(endpoint.first + ':' +
-                                      std::to_string(endpoint.second));
-  }
   requestPeerList();
   autoSyncIfBehind();
   intelligentSync();
@@ -4535,11 +4521,6 @@ void Network::setPublicPeerId(const std::string &peerId) {
   } else {
     publicPeerId = peerId;
   }
-  if (peerManager) {
-    auto endpoint = determineAnnounceEndpoint();
-    if (!endpoint.first.empty() && endpoint.second > 0)
-      peerManager->setExternalAddress(endpoint.first + ':' + std::to_string(endpoint.second));
-  }
   if (!configuredExternalExplicit)
     runHairpinCheck();
 }
@@ -5657,7 +5638,7 @@ void Network::dispatch(const alyncoin::net::Frame &f, const std::string &peer) {
       break;
     }
     if (peerManager)
-      peerManager->recordTipHash(peer, f.tip_hash_res().hash());
+      peerManager->setPeerTipHash(peer, f.tip_hash_res().hash());
     break;
   case alyncoin::net::Frame::kPeerListReq:
     if (getAppConfig().allow_peer_exchange)

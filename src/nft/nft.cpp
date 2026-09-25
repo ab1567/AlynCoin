@@ -62,16 +62,6 @@ void NFT::generateZkStarkProof() {
     std::cerr << "✅ [ZK] NFT zk-STARK proof generated. Size: " << zkStarkProof.size() << " bytes\n";
 }
 
-bool NFT::verifyZkStarkProof() const {
-    std::string seed = id + creator + owner + metadata + imageHash + std::to_string(timestamp);
-    std::string txRoot = creator + metadata + std::to_string(timestamp);
-    std::string prevHash = "nft-prev";
-    std::string blockHash = Crypto::blake3(seed);
-
-    std::string proofStr(zkStarkProof.begin(), zkStarkProof.end());
-    return WinterfellStark::verifyProof(proofStr, blockHash, prevHash, txRoot);
-}
-
 // --- NFT mint: Always L2, direct ---
 
 bool NFT::submitMetadataHashTransaction() const {

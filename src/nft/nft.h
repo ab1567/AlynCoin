@@ -55,7 +55,6 @@ public:
 
     // ✅ Verification
     bool verifySignature() const;
-    bool verifyZkStarkProof() const;
 
     // ⚙️ Proof generation
     void generateZkStarkProof();
